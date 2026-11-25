@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import glob
 import os
+import pathlib
 
 import numpy as np
 import pydicom
@@ -59,8 +60,13 @@ def test_study_and_geometry_are_consistent(tmp_path, enhanced_file):
     convert_file(enhanced_file["path"], str(out))
     datasets = _read_all(str(out))
 
-    assert all(str(ds.StudyInstanceUID) == STUDY_UID for ds in datasets)
-    assert all(str(ds.FrameOfReferenceUID) == FRAME_OF_REFERENCE_UID for ds in datasets)
+    # A new study UID: Eclipse refuses a second study with the UID of the
+    # enhanced series that was already imported.
+    study_uids = {str(ds.StudyInstanceUID) for ds in datasets}
+    assert len(study_uids) == 1
+    assert study_uids.pop() != STUDY_UID
+    assert all(str(ds.FrameOfReferenceUID) != FRAME_OF_REFERENCE_UID for ds in datasets)
+    assert len({str(ds.FrameOfReferenceUID) for ds in datasets}) == 1
     assert all(ds.SOPClassUID == dcm_magic.MR_IMAGE_STORAGE for ds in datasets)
 
     for ds in datasets:
@@ -114,6 +120,27 @@ def test_patient_data_is_not_hardcoded(tmp_path, enhanced_file):
     for ds in _read_all(str(out)):
         assert str(ds.PatientName) == enhanced_file["patient_name"]
         assert str(ds.PatientID) == enhanced_file["patient_id"]
+
+
+def test_keep_study_uid_opt_in(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out), keep_study_uid=True)
+    datasets = _read_all(str(out))
+
+    assert all(str(ds.StudyInstanceUID) == STUDY_UID for ds in datasets)
+    assert all(str(ds.FrameOfReferenceUID) == FRAME_OF_REFERENCE_UID for ds in datasets)
+
+
+def test_truncated_file_is_repaired(tmp_path, enhanced_file):
+    truncated = tmp_path / "truncated.dcm"
+    data = pathlib.Path(enhanced_file["path"]).read_bytes()
+    truncated.write_bytes(data[:-8])  # strip the trailing pixel-data delimiter
+
+    out = tmp_path / "out"
+    report = convert_file(str(truncated), str(out))
+
+    assert report.frame_count == len(enhanced_file["frames"])
+    assert any("truncated" in warning.lower() for warning in report.warnings)
 
 
 def test_anonymize(tmp_path, enhanced_file):
@@ -250,3 +277,14 @@ def test_diffusion_b_values_become_separate_series(tmp_path):
     assert len(report.series) == 2
     assert sorted(s.frame_count for s in report.series) == [2, 2]
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def test_sop_uids_are_unique_across_studies(tmp_path, enhanced_file):
+    default_out = tmp_path / "default"
+    keep_out = tmp_path / "keep"
+    convert_file(enhanced_file["path"], str(default_out))
+    convert_file(enhanced_file["path"], str(keep_out), keep_study_uid=True)
+
+    default_sops = {str(ds.SOPInstanceUID) for ds in _read_all(str(default_out))}
+    keep_sops = {str(ds.SOPInstanceUID) for ds in _read_all(str(keep_out))}
+    assert not default_sops & keep_sops

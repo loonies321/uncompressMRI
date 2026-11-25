@@ -86,7 +86,7 @@ def record(root: tk.Tk, path: str) -> subprocess.Popen:
     )
 
 
-def make_gif(video: str, out: str, width: int = 780, fps: int = 12) -> None:
+def make_gif(video: str, out: str, width: int = 900, fps: int = 12) -> None:
     script = (
         "fps=%d,scale=%d:-1:flags=lanczos,split[a][b];"
         "[a]palettegen=max_colors=160[p];"
@@ -160,8 +160,8 @@ def main() -> int:
 
     root = tk.Tk()
     root.title("uncompressMRI %s" % __version__)
-    root.geometry("880x720")
-    root.minsize(780, 620)
+    root.geometry("1080x840")
+    root.minsize(980, 820)
     root.attributes("-topmost", True)
 
     app = UncompressApp(root, lang="ru")
@@ -177,7 +177,7 @@ def main() -> int:
             (2, "Проверьте папку\nрезультата", widget_box(app, app.output_entry)),
             (3, "Включите\nанонимизацию", widget_box(app, app.anon_check)),
             (4, "Нажмите\nРАСПАКОВАТЬ", widget_box(app, app.run_button)),
-            (5, "Смотрите журнал\nи счётчик", widget_box(app, app.log)),
+            (5, "Журнал, счётчик\nи предпросмотр", widget_box(app, app.log)),
         ]
 
     def targets_en() -> list[tuple[int, str, dict[str, int]]]:
@@ -186,7 +186,7 @@ def main() -> int:
             (2, "Check the\noutput folder", widget_box(app, app.output_entry)),
             (3, "Enable\nanonymization", widget_box(app, app.anon_check)),
             (4, "Press\nUNPACK", widget_box(app, app.run_button)),
-            (5, "Watch the log\nand the counter", widget_box(app, app.log)),
+            (5, "Log, counter\nand preview", widget_box(app, app.log)),
         ]
 
     def info_ready() -> bool:
@@ -203,6 +203,7 @@ def main() -> int:
         root.after(100, check)
 
     def capture_ru() -> None:
+        root.update_idletasks()
         clean = os.path.join(DOCS, "gui-main.png")
         grab(root, clean)
         annotate(

@@ -33,6 +33,7 @@ import traceback
 from collections.abc import Sequence
 
 import i18n
+import preview
 from dcm_magic import (
     ConversionError,
     ConversionReport,
@@ -77,6 +78,12 @@ def run_cli(argv: Sequence[str]) -> int:
         help="remove patient identifiers and regenerate the study UID",
     )
     parser.add_argument(
+        "--keep-study-uid",
+        action="store_true",
+        help="reuse the source Study Instance UID (Eclipse may refuse a study "
+        "that was already imported)",
+    )
+    parser.add_argument(
         "--keep-private",
         action="store_true",
         help="keep vendor private tags in the output",
@@ -107,6 +114,7 @@ def run_cli(argv: Sequence[str]) -> int:
                 path,
                 target,
                 anonymize=args.anon,
+                keep_study_uid=args.keep_study_uid,
                 keep_private_tags=args.keep_private,
                 overwrite=not args.no_overwrite,
             )
@@ -352,22 +360,27 @@ class UncompressApp:
             actions, text="", command=self.open_output, state="disabled"
         )
         self.open_button.grid(row=0, column=1, padx=(8, 0))
-        ttk.Label(actions, textvariable=self.progress_text, style="Subtitle.TLabel").grid(
-            row=0, column=2, sticky="e"
-        )
+        ttk.Label(
+            actions, textvariable=self.progress_text, style="Subtitle.TLabel"
+        ).grid(row=0, column=2, sticky="e")
 
         self.progress_bar = ttk.Progressbar(
             outer, variable=self.progress_var, maximum=100.0
         )
         self.progress_bar.grid(row=5, column=0, sticky="ew", pady=(8, 0))
 
-        self.log_frame = ttk.LabelFrame(outer, text="", padding=6)
-        self.log_frame.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        body = ttk.Frame(outer)
+        body.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+
+        self.log_frame = ttk.LabelFrame(body, text="", padding=6)
+        self.log_frame.grid(row=0, column=0, sticky="nsew")
         self.log_frame.columnconfigure(0, weight=1)
         self.log_frame.rowconfigure(0, weight=1)
         self.log = tk.Text(
             self.log_frame,
-            height=10,
+            height=8,
             wrap="word",
             state="disabled",
             font="TkFixedFont",
@@ -380,11 +393,59 @@ class UncompressApp:
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log.configure(yscrollcommand=scrollbar.set)
 
+        self.preview_frame = ttk.LabelFrame(body, text="", padding=6)
+        self.preview_frame.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+        self.preview_frame.columnconfigure(0, weight=1)
+        self.preview_canvas = tk.Canvas(
+            self.preview_frame,
+            width=preview.MAX_SIZE,
+            height=preview.MAX_SIZE,
+            highlightthickness=0,
+            bd=0,
+            bg="#101418",
+        )
+        self.preview_canvas.grid(row=0, column=0)
+        center = preview.MAX_SIZE // 2
+        self._preview_image = self.preview_canvas.create_image(
+            center, center, anchor="center"
+        )
+        self._preview_text = self.preview_canvas.create_text(
+            center,
+            center,
+            text="",
+            width=preview.MAX_SIZE - 40,
+            fill="#8b949e",
+            justify="center",
+            font=("TkDefaultFont", 10),
+        )
+        self.preview_scale = ttk.Scale(
+            self.preview_frame,
+            from_=0,
+            to=0,
+            orient="horizontal",
+            state="disabled",
+            command=self._on_preview_scale,
+        )
+        self.preview_scale.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.preview_counter = ttk.Label(
+            # A space keeps the row from collapsing before the first slice.
+            self.preview_frame,
+            text=" ",
+            style="Subtitle.TLabel",
+        )
+        self.preview_counter.grid(row=2, column=0, sticky="w", pady=(4, 0))
+        self._preview_paths: list[str] = []
+        self._preview_cache: dict[int, bytes] = {}
+        self._preview_index = 0
+        self._preview_job = None
+        self._preview_photo = None
+
         self.status_label = ttk.Label(
             outer, textvariable=self.status_var, style="Status.TLabel"
         )
         self.status_label.grid(row=7, column=0, sticky="w", pady=(10, 0))
 
+        self.clear_preview()
         self._apply_lang(initial_lang)
 
     # -- language ---------------------------------------------------------
@@ -417,6 +478,11 @@ class UncompressApp:
         self.run_button.configure(text=self.t("unpack"))
         self.open_button.configure(text=self.t("open_folder"))
         self.log_frame.configure(text=self.t("log"))
+        self.preview_frame.configure(text=self.t("preview"))
+        if not self._preview_paths:
+            self.preview_canvas.itemconfigure(
+                self._preview_text, text=self.t("preview_empty")
+            )
         self._render_status()
         path = self.input_var.get().strip().strip('"')
         if path and os.path.isfile(path):
@@ -490,6 +556,77 @@ class UncompressApp:
 
         threading.Thread(target=job, daemon=True).start()
 
+    # -- preview ----------------------------------------------------------
+
+    def _cancel_preview_job(self) -> None:
+        if self._preview_job is not None:
+            self.root.after_cancel(self._preview_job)
+            self._preview_job = None
+
+    def clear_preview(self, message: str | None = None) -> None:
+        self._cancel_preview_job()
+        self._preview_paths = []
+        self._preview_cache.clear()
+        self._preview_photo = None
+        self._preview_index = 0
+        self.preview_scale.configure(to=0, state="disabled")
+        self.preview_scale.set(0)
+        self.preview_counter.configure(text=" ")
+        self.preview_canvas.itemconfigure(self._preview_image, image="")
+        text = message if message is not None else self.t("preview_empty")
+        self.preview_canvas.itemconfigure(self._preview_text, text=text)
+
+    def set_preview(self, paths: list[str], index: int = 0) -> None:
+        self._cancel_preview_job()
+        self._preview_paths = list(paths)
+        self._preview_cache.clear()
+        if not self._preview_paths:
+            self.clear_preview()
+            return
+        self.preview_scale.configure(to=len(self._preview_paths) - 1, state="normal")
+        self.preview_scale.set(index)
+        self._show_preview(index)
+
+    def _on_preview_scale(self, value) -> None:
+        self._cancel_preview_job()
+        self._preview_job = self.root.after(
+            40, lambda: self._show_preview(int(float(value)))
+        )
+
+    def _show_preview(self, index: int) -> None:
+        self._preview_job = None
+        if not self._preview_paths:
+            return
+        index = max(0, min(index, len(self._preview_paths) - 1))
+        self._preview_index = index
+        total = len(self._preview_paths)
+        ppm = self._preview_cache.get(index)
+        if ppm is None:
+            try:
+                # One slice only: a 1 GB study is never loaded into memory.
+                ppm = preview.render_ppm(self._preview_paths[index])
+            except Exception as exc:  # noqa: BLE001 - shown inside the canvas
+                self._preview_photo = None
+                self.preview_canvas.itemconfigure(self._preview_image, image="")
+                self.preview_canvas.itemconfigure(
+                    self._preview_text,
+                    text=self.t("preview_error", error=str(exc)[:80]),
+                )
+                self.preview_counter.configure(text="%d / %d" % (index + 1, total))
+                return
+            if len(self._preview_cache) >= 8:
+                self._preview_cache.pop(next(iter(self._preview_cache)))
+            self._preview_cache[index] = ppm
+        try:
+            self._preview_photo = self._tk.PhotoImage(data=ppm)
+        except Exception:  # noqa: BLE001 - Tk build without PPM support
+            return
+        self.preview_canvas.itemconfigure(
+            self._preview_image, image=self._preview_photo
+        )
+        self.preview_canvas.itemconfigure(self._preview_text, text="")
+        self.preview_counter.configure(text="%d / %d" % (index + 1, total))
+
     # -- actions ----------------------------------------------------------
 
     def choose_input(self) -> None:
@@ -541,6 +678,7 @@ class UncompressApp:
         keep_private = self.private_var.get()
 
         self.clear_log()
+        self.clear_preview()
         self.progress_var.set(0.0)
         self.progress_text.set("")
         self.open_button.configure(state="disabled")
@@ -592,6 +730,7 @@ class UncompressApp:
                 self.append_log(self.t("log_warning", text=warning))
             self.run_button.configure(state="normal")
             self.open_button.configure(state="normal")
+            self.set_preview(report.output_files)
             self.set_status(
                 "status_done",
                 "Ok",
@@ -622,8 +761,8 @@ def run_gui() -> int:
 
     root = tk.Tk()
     root.title("uncompressMRI %s" % __version__)
-    root.geometry("880x720")
-    root.minsize(780, 620)
+    root.geometry("1080x840")
+    root.minsize(980, 820)
 
     app = UncompressApp(root)
     root.bind("<Return>", lambda _event: app.start())

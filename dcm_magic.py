@@ -26,6 +26,7 @@ Licensed under the Apache License, Version 2.0.
 from __future__ import annotations
 
 import copy
+import io
 import logging
 import os
 from collections.abc import Callable, Iterable, Sequence
@@ -40,7 +41,7 @@ import i18n
 
 log = logging.getLogger(__name__)
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
 
 MR_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.4"
 ENHANCED_MR_STORAGE = "1.2.840.10008.5.1.4.1.1.4.1"
@@ -631,20 +632,16 @@ def _write_frame(
     series_uid: str,
     series_number: int,
     instance_number: int,
-    source_series_uid: str,
 ) -> pydicom.Dataset:
     ds = copy.deepcopy(base)
 
     ds.SOPClassUID = MR_IMAGE_STORAGE
     ds.file_meta.MediaStorageSOPClassUID = MR_IMAGE_STORAGE
+    # The series UID already contains the study UID, so a new study never
+    # produces SOP Instance UIDs that Eclipse has seen before.
     ds.SOPInstanceUID = generate_uid(
         prefix=_UID_PREFIX,
-        entropy_srcs=[
-            source_series_uid,
-            str(series_number),
-            str(instance_number),
-            str(frame.index),
-        ],
+        entropy_srcs=[series_uid, str(instance_number), str(frame.index)],
     )
     ds.file_meta.MediaStorageSOPInstanceUID = ds.SOPInstanceUID
     ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
@@ -704,11 +701,58 @@ def _save(ds: pydicom.Dataset, path: str) -> None:
         ds.save_as(path, write_like_original=False)
 
 
+_PIXEL_DATA_DELIMITER = b"\xfe\xff\xdd\xe0\x00\x00\x00\x00"
+
+
+def _read_dataset(path: str, *, stop_before_pixels: bool = False):
+    """Read a dataset, repairing a truncated pixel-data delimiter if needed."""
+    try:
+        return pydicom.dcmread(path, stop_before_pixels=stop_before_pixels), False
+    except Exception:  # noqa: BLE001 - the retry decides whether the file is usable
+        with open(path, "rb") as handle:
+            data = handle.read()
+        ds = pydicom.dcmread(
+            io.BytesIO(data + _PIXEL_DATA_DELIMITER),
+            stop_before_pixels=stop_before_pixels,
+            force=True,
+        )
+        return ds, True
+
+
+def _read_pixels(path: str):
+    """Return ``(dataset, pixel_array, restored)`` for *path*.
+
+    Some scanners (notably Siemens) write files that end right after the pixel
+    data without the sequence delimiter. ``dcmread`` may accept such a file but
+    decoding the pixels then fails; in that case the delimiter is appended once
+    and the file is parsed again ("Siemens EOF fix").
+    """
+    try:
+        ds, restored = _read_dataset(path)
+        return ds, ds.pixel_array, restored
+    except Exception as first:  # noqa: BLE001 - retried below, then re-raised
+        try:
+            with open(path, "rb") as handle:
+                data = handle.read()
+            ds = pydicom.dcmread(
+                io.BytesIO(data + _PIXEL_DATA_DELIMITER), force=True
+            )
+            pixels = ds.pixel_array
+        except Exception:  # noqa: BLE001 - not a truncation problem
+            raise first
+        log.warning(
+            "%s: file was truncated, restored the pixel-data delimiter",
+            os.path.basename(path),
+        )
+        return ds, pixels, True
+
+
 def convert_file(
     path: str,
     out_dir: str | None = None,
     *,
     anonymize: bool = False,
+    keep_study_uid: bool = False,
     keep_private_tags: bool = False,
     overwrite: bool = True,
     progress: Callable[[int, int], None] | None = None,
@@ -724,6 +768,10 @@ def convert_file(
         input file.
     anonymize:
         Replace patient identifiers and regenerate the study UID.
+    keep_study_uid:
+        Reuse the source Study Instance UID. By default a new deterministic
+        study UID is generated: Eclipse refuses to import a second study with
+        the UID of the enhanced series that was already imported.
     keep_private_tags:
         Keep vendor private tags (dropped by default).
     overwrite:
@@ -742,9 +790,14 @@ def convert_file(
     out_dir = os.path.abspath(os.path.expanduser(out_dir))
 
     try:
-        ds = pydicom.dcmread(path)
+        ds, pixel_array, restored = _read_pixels(path)
     except Exception as exc:  # pragma: no cover - depends on the file
-        raise ConversionError("Cannot read %s: %s" % (path, exc)) from exc
+        raise ConversionError(
+            "Cannot read %s: %s\n"
+            "JPEG/JPEG-2000 files need 'pylibjpeg' or 'python-gdcm'; truncated "
+            "files are repaired automatically when the damage is a missing "
+            "pixel-data delimiter." % (path, exc)
+        ) from exc
 
     sop_class = str(ds.get("SOPClassUID", ""))
     if sop_class not in (ENHANCED_MR_STORAGE, ENHANCED_MR_COLOR_STORAGE, "", MR_IMAGE_STORAGE):
@@ -754,15 +807,6 @@ def convert_file(
             sop_class,
             getattr(ds.get("SOPClassUID"), "name", "unknown"),
         )
-
-    try:
-        pixel_array = ds.pixel_array
-    except Exception as exc:
-        raise ConversionError(
-            "Cannot decode pixel data of %s: %s\n"
-            "If the file uses JPEG/JPEG-2000 compression install 'pylibjpeg' "
-            "or 'python-gdcm'." % (path, exc)
-        ) from exc
 
     if pixel_array.ndim == 2:
         pixel_array = pixel_array[np.newaxis, ...]
@@ -780,6 +824,11 @@ def convert_file(
 
     frames = _collect_frames(ds)
     warnings = _ensure_geometry(frames, ds)
+    if restored:
+        warnings.append(
+            "The file was truncated: the pixel-data delimiter was restored "
+            "(Siemens EOF fix)."
+        )
 
     base = _build_base(ds)
     if not keep_private_tags:
@@ -787,9 +836,9 @@ def convert_file(
     base.Rows = int(pixel_array.shape[1])
     base.Columns = int(pixel_array.shape[2])
 
-    study_uid = str(ds.get("StudyInstanceUID", ""))
+    source_study_uid = str(ds.get("StudyInstanceUID", ""))
     source_series_uid = str(ds.get("SeriesInstanceUID", ""))
-    if not study_uid or not source_series_uid:
+    if not source_study_uid or not source_series_uid:
         raise ConversionError("Study/Series Instance UID missing from %s" % path)
 
     if anonymize:
@@ -807,16 +856,20 @@ def convert_file(
         base.StationName = ""
         base.StudyID = ""
         base.AccessionNumber = ""
-        new_study_uid = generate_uid(
-            prefix=_UID_PREFIX, entropy_srcs=["anon", study_uid, source_series_uid]
+
+    if anonymize or not keep_study_uid:
+        study_uid = generate_uid(
+            prefix=_UID_PREFIX,
+            entropy_srcs=["study", source_study_uid, source_series_uid],
         )
-        base.StudyInstanceUID = new_study_uid
+        base.StudyInstanceUID = study_uid
         if "FrameOfReferenceUID" in base:
             base.FrameOfReferenceUID = generate_uid(
                 prefix=_UID_PREFIX,
-                entropy_srcs=["anon-for", study_uid, str(base.FrameOfReferenceUID)],
+                entropy_srcs=["for", source_study_uid, str(base.FrameOfReferenceUID)],
             )
-        study_uid = new_study_uid
+    else:
+        study_uid = source_study_uid
 
     base.StudyInstanceUID = study_uid
 
@@ -889,7 +942,6 @@ def convert_file(
                 series_uid=series_uid,
                 series_number=series_number,
                 instance_number=instance_number,
-                source_series_uid=source_series_uid,
             )
             out_ds.SeriesDescription = description
 
@@ -970,7 +1022,7 @@ def shamanstvo(multifile: str, normal_files_folder: str | None = None) -> list[s
 
 def describe(path: str, *, compact: bool = False, lang: str = "ru") -> str:
     """Return a short human readable summary of a DICOM file."""
-    ds = pydicom.dcmread(path, stop_before_pixels=True)
+    ds, _restored = _read_dataset(path, stop_before_pixels=True)
     frames = _as_int(ds.get("NumberOfFrames")) or 1
     sop_class = getattr(ds.get("SOPClassUID"), "name", "unknown")
     rows = int(ds.get("Rows", 0))
