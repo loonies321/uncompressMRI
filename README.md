@@ -3,6 +3,8 @@
 **Режет «сжатую» multi-frame МРТ-серию на обычные посрезовые DICOM-файлы,
 которые импортируются в Eclipse / Aria.**
 
+**Русский** · 🇬🇧 [English version](README.en.md)
+
 [![Release](https://img.shields.io/github/v/release/loonies321/uncompressMRI?style=flat-square)](https://github.com/loonies321/uncompressMRI/releases/latest)
 [![Windows build](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
@@ -224,6 +226,8 @@ Apache License 2.0 — см. [LICENCE.txt](LICENCE.txt).
 ---
 
 ## English summary
+
+Full English README: **[README.en.md](README.en.md)**.
 
 `uncompressMRI` converts **enhanced (multi-frame) MRI DICOM** (Philips
 `Enhanced MR Image Storage`) into plain **single-frame `MR Image Storage`**

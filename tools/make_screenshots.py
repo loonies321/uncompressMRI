@@ -5,7 +5,8 @@ Needs a real X display plus ImageMagick (``import``) and ffmpeg::
     python -m pip install pillow
     python tools/make_screenshots.py
 
-Writes docs/gui-main.png, docs/gui-done.png, docs/gui-howto.png, docs/demo.gif.
+Writes docs/gui-main.png, docs/gui-done.png, docs/gui-howto.png,
+docs/gui-howto-en.png and docs/demo.gif.
 """
 
 from __future__ import annotations
@@ -102,7 +103,12 @@ def make_gif(video: str, out: str, width: int = 780, fps: int = 12) -> None:
     )
 
 
-def annotate(clean: str, out: str, targets: list[tuple[int, str, dict[str, int]]]) -> None:
+def annotate(
+    clean: str,
+    out: str,
+    targets: list[tuple[int, str, dict[str, int]]],
+    title: str,
+) -> None:
     from PIL import Image, ImageDraw, ImageFont
 
     fonts = "/usr/share/fonts/truetype/dejavu/"
@@ -116,8 +122,7 @@ def annotate(clean: str, out: str, targets: list[tuple[int, str, dict[str, int]]
     canvas = Image.new("RGB", (left + shot_w + gap, top + shot_h + gap), "#f6f8fa")
     draw = ImageDraw.Draw(canvas)
 
-    draw.text((26, 22), "uncompressMRI %s — что нажимать" % __version__,
-              fill="#1f2328", font=title_font)
+    draw.text((26, 22), title, fill="#1f2328", font=title_font)
     draw.rectangle([left + 4, top + 5, left + shot_w + 4, top + shot_h + 5],
                    fill="#d8dee4")
     canvas.paste(shot, (left, top))
@@ -164,13 +169,22 @@ def main() -> int:
     state = {"step": "load"}
     recorder: dict[str, subprocess.Popen | None] = {"proc": None}
 
-    def targets() -> list[tuple[int, str, dict[str, int]]]:
+    def targets_ru() -> list[tuple[int, str, dict[str, int]]]:
         return [
             (1, "Выберите файл\nсерии", widget_box(app, app.source_entry)),
             (2, "Проверьте папку\nрезультата", widget_box(app, app.output_entry)),
             (3, "Включите\nанонимизацию", widget_box(app, app.anon_check)),
             (4, "Нажмите\nРАСПАКОВАТЬ", widget_box(app, app.run_button)),
             (5, "Смотрите журнал\nи счётчик", widget_box(app, app.log)),
+        ]
+
+    def targets_en() -> list[tuple[int, str, dict[str, int]]]:
+        return [
+            (1, "Choose the\nseries file", widget_box(app, app.source_entry)),
+            (2, "Check the\noutput folder", widget_box(app, app.output_entry)),
+            (3, "Enable\nanonymization", widget_box(app, app.anon_check)),
+            (4, "Press\nРАСПАКОВАТЬ", widget_box(app, app.run_button)),
+            (5, "Watch the log\nand the counter", widget_box(app, app.log)),
         ]
 
     def stop_recording() -> None:
@@ -194,7 +208,18 @@ def main() -> int:
         if step == "load" and info and "Читаю" not in info:
             clean = os.path.join(DOCS, "gui-main.png")
             grab(root, clean)
-            annotate(clean, os.path.join(DOCS, "gui-howto.png"), targets())
+            annotate(
+                clean,
+                os.path.join(DOCS, "gui-howto.png"),
+                targets_ru(),
+                "uncompressMRI %s — что нажимать" % __version__,
+            )
+            annotate(
+                clean,
+                os.path.join(DOCS, "gui-howto-en.png"),
+                targets_en(),
+                "uncompressMRI %s — what to click" % __version__,
+            )
             recorder["proc"] = record(root, RAW_VIDEO)
             state["step"] = "starting"
             root.after(700, begin)
