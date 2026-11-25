@@ -38,7 +38,7 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 log = logging.getLogger(__name__)
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 MR_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.4"
 ENHANCED_MR_STORAGE = "1.2.840.10008.5.1.4.1.1.4.1"
@@ -966,19 +966,29 @@ def shamanstvo(multifile: str, normal_files_folder: str | None = None) -> list[s
     return convert_file(multifile).output_files
 
 
-def describe(path: str) -> str:
+def describe(path: str, *, compact: bool = False) -> str:
     """Return a short human readable summary of a DICOM file."""
     ds = pydicom.dcmread(path, stop_before_pixels=True)
     frames = _as_int(ds.get("NumberOfFrames")) or 1
+    sop_class = getattr(ds.get("SOPClassUID"), "name", "unknown")
+    rows = int(ds.get("Rows", 0))
+    columns = int(ds.get("Columns", 0))
+    bits = int(ds.get("BitsAllocated", 0))
+    series = str(ds.get("SeriesDescription", "") or "")
+    if compact:
+        parts = ["кадров: %d" % frames, "%d×%d" % (rows, columns), "%d бит" % bits]
+        if series:
+            parts.append(series)
+        return "%s — %s\n%s" % (os.path.basename(path), sop_class, " · ".join(parts))
     return (
         "%s\n  SOP class: %s\n  frames: %d\n  %dx%d, %d bit\n  series: %s"
         % (
             os.path.basename(path),
-            getattr(ds.get("SOPClassUID"), "name", "unknown"),
+            sop_class,
             frames,
-            int(ds.get("Rows", 0)),
-            int(ds.get("Columns", 0)),
-            int(ds.get("BitsAllocated", 0)),
-            ds.get("SeriesDescription", ""),
+            rows,
+            columns,
+            bits,
+            series,
         )
     )
