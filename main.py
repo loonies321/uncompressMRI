@@ -22,6 +22,7 @@ Run without arguments to open the window, or from a terminal:
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import queue
@@ -31,6 +32,7 @@ import threading
 import traceback
 from collections.abc import Sequence
 
+import i18n
 from dcm_magic import (
     ConversionError,
     ConversionReport,
@@ -150,6 +152,82 @@ def _center_window(window) -> None:
     window.geometry("+%d+%d" % (x, y))
 
 
+class FlagSwitcher:
+    """Two clickable flags that switch the interface language.
+
+    The flags are painted on a ``Canvas``: no image files, no extra packages
+    and nothing to bundle into the Windows .exe.
+    """
+
+    WIDTH = 32
+    HEIGHT = 20
+    ACTIVE = "#0969da"
+    INACTIVE = "#c6cdd5"
+
+    def __init__(self, master, on_change, lang=i18n.DEFAULT, tk=None) -> None:
+        self._on_change = on_change
+        self._lang = lang
+        self._holders = {}
+        self.frame = tk.Frame(master)
+        for code, painter in (("ru", self._paint_ru), ("en", self._paint_en)):
+            holder = tk.Frame(self.frame, bg=self.INACTIVE, padx=2, pady=2)
+            canvas = tk.Canvas(
+                holder,
+                width=self.WIDTH,
+                height=self.HEIGHT,
+                highlightthickness=0,
+                bd=0,
+                cursor="hand2",
+            )
+            painter(canvas)
+            canvas.pack()
+            for widget in (holder, canvas):
+                widget.bind("<Button-1>", lambda _event, c=code: self._choose(c))
+            holder.pack(side="left", padx=(0, 6))
+            self._holders[code] = holder
+        self.set_lang(lang)
+
+    def _paint_ru(self, canvas) -> None:
+        band = self.HEIGHT / 3
+        for index, color in enumerate(("#ffffff", "#0039a6", "#d52b1e")):
+            canvas.create_rectangle(
+                0,
+                index * band,
+                self.WIDTH,
+                (index + 1) * band,
+                fill=color,
+                outline=color,
+            )
+
+    def _paint_en(self, canvas) -> None:
+        width, height = self.WIDTH, self.HEIGHT
+        canvas.create_rectangle(0, 0, width, height, fill="#012169", outline="#012169")
+        for color, line_width in (("#ffffff", 6), ("#c8102e", 2)):
+            canvas.create_line(0, 0, width, height, fill=color, width=line_width)
+            canvas.create_line(0, height, width, 0, fill=color, width=line_width)
+        for color, line_width in (("#ffffff", 10), ("#c8102e", 6)):
+            canvas.create_line(
+                width / 2, 0, width / 2, height, fill=color, width=line_width
+            )
+            canvas.create_line(
+                0, height / 2, width, height / 2, fill=color, width=line_width
+            )
+
+    def _choose(self, code) -> None:
+        if code != self._lang:
+            self.set_lang(code)
+            self._on_change(code)
+
+    def set_lang(self, code) -> None:
+        self._lang = code
+        for key, holder in self._holders.items():
+            holder.configure(bg=self.ACTIVE if key == code else self.INACTIVE)
+
+    @property
+    def lang(self):
+        return self._lang
+
+
 class UncompressApp:
     """The main window.
 
@@ -157,7 +235,7 @@ class UncompressApp:
     build the window and drive it without faking mouse clicks.
     """
 
-    def __init__(self, root) -> None:
+    def __init__(self, root, lang: str | None = None) -> None:
         import tkinter as tk
         from tkinter import filedialog, messagebox, ttk
 
@@ -167,6 +245,7 @@ class UncompressApp:
         self.root = root
         self.messages: queue.Queue[tuple[str, object]] = queue.Queue()
         self._worker: threading.Thread | None = None
+        self.lang = i18n.DEFAULT
 
         style = ttk.Style(root)
         if "clam" in style.theme_names():
@@ -197,7 +276,10 @@ class UncompressApp:
         self.private_var = tk.BooleanVar(value=False)
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_text = tk.StringVar(value="")
-        self.status_var = tk.StringVar(value="Выберите файл серии")
+        self.status_var = tk.StringVar(value="")
+        self._status_key = "status_idle"
+        self._status_kind = "Idle"
+        self._status_args: dict[str, object] = {}
 
         outer = ttk.Frame(root, padding=16)
         outer.pack(fill="both", expand=True)
@@ -206,60 +288,56 @@ class UncompressApp:
 
         header = ttk.Frame(outer)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        ttk.Label(header, text="Распаковка enhanced MRI", style="Title.TLabel").pack(
-            anchor="w"
-        )
-        ttk.Label(
-            header,
-            text="Multi-frame DICOM → посрезовые файлы для Eclipse / Aria",
-            style="Subtitle.TLabel",
-        ).pack(anchor="w")
+        header.columnconfigure(0, weight=1)
+        self.title_label = ttk.Label(header, text="", style="Title.TLabel")
+        self.title_label.grid(row=0, column=0, sticky="w")
+        self.subtitle_label = ttk.Label(header, text="", style="Subtitle.TLabel")
+        self.subtitle_label.grid(row=1, column=0, sticky="w")
 
-        source_box = ttk.LabelFrame(outer, text=" Исходный файл ", padding=10)
-        source_box.grid(row=1, column=0, sticky="ew")
-        source_box.columnconfigure(1, weight=1)
-        ttk.Label(source_box, text="Файл серии").grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self.source_entry = ttk.Entry(source_box, textvariable=self.input_var)
+        initial_lang = lang if lang in i18n.LANGUAGES else self._load_lang()
+        self.flags = FlagSwitcher(header, self.set_language, initial_lang, tk=tk)
+        self.flags.frame.grid(row=0, column=1, rowspan=2, sticky="ne")
+
+        self.source_box = ttk.LabelFrame(outer, text="", padding=10)
+        self.source_box.grid(row=1, column=0, sticky="ew")
+        self.source_box.columnconfigure(1, weight=1)
+        self.source_label = ttk.Label(self.source_box, text="")
+        self.source_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.source_entry = ttk.Entry(self.source_box, textvariable=self.input_var)
         self.source_entry.grid(row=0, column=1, sticky="ew")
         self.source_button = ttk.Button(
-            source_box, text="Обзор…", command=self.choose_input
+            self.source_box, text="", command=self.choose_input
         )
         self.source_button.grid(row=0, column=2, padx=(8, 0))
         self.info_label = ttk.Label(
-            source_box, text="", style="Subtitle.TLabel", justify="left"
+            self.source_box, text="", style="Subtitle.TLabel", justify="left"
         )
         self.info_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
-        output_box = ttk.LabelFrame(outer, text=" Папка результата ", padding=10)
-        output_box.grid(row=2, column=0, sticky="ew", pady=(12, 0))
-        output_box.columnconfigure(1, weight=1)
-        ttk.Label(output_box, text="Папка").grid(
-            row=0, column=0, sticky="w", padx=(0, 8)
-        )
-        self.output_entry = ttk.Entry(output_box, textvariable=self.output_var)
+        self.output_box = ttk.LabelFrame(outer, text="", padding=10)
+        self.output_box.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        self.output_box.columnconfigure(1, weight=1)
+        self.output_label = ttk.Label(self.output_box, text="")
+        self.output_label.grid(row=0, column=0, sticky="w", padx=(0, 8))
+        self.output_entry = ttk.Entry(self.output_box, textvariable=self.output_var)
         self.output_entry.grid(row=0, column=1, sticky="ew")
         self.output_button = ttk.Button(
-            output_box, text="Обзор…", command=self.choose_output
+            self.output_box, text="", command=self.choose_output
         )
         self.output_button.grid(row=0, column=2, padx=(8, 0))
-        ttk.Label(
-            output_box,
-            text="Пусто → <имя файла>_slices рядом с исходным файлом",
-            style="Subtitle.TLabel",
-        ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
+        self.output_hint = ttk.Label(
+            self.output_box, text="", style="Subtitle.TLabel"
+        )
+        self.output_hint.grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
         options = ttk.Frame(outer)
         options.grid(row=3, column=0, sticky="w", pady=(12, 0))
         self.anon_check = ttk.Checkbutton(
-            options,
-            text="Анонимизировать (ФИО/ID, новый Study UID)",
-            variable=self.anon_var,
+            options, text="", variable=self.anon_var
         )
         self.anon_check.pack(anchor="w")
         self.private_check = ttk.Checkbutton(
-            options, text="Оставить приватные теги вендора", variable=self.private_var
+            options, text="", variable=self.private_var
         )
         self.private_check.pack(anchor="w")
 
@@ -267,11 +345,11 @@ class UncompressApp:
         actions.grid(row=4, column=0, sticky="ew", pady=(14, 0))
         actions.columnconfigure(2, weight=1)
         self.run_button = ttk.Button(
-            actions, text="РАСПАКОВАТЬ", style="Primary.TButton", command=self.start
+            actions, text="", style="Primary.TButton", command=self.start
         )
         self.run_button.grid(row=0, column=0)
         self.open_button = ttk.Button(
-            actions, text="Открыть папку", command=self.open_output, state="disabled"
+            actions, text="", command=self.open_output, state="disabled"
         )
         self.open_button.grid(row=0, column=1, padx=(8, 0))
         ttk.Label(actions, textvariable=self.progress_text, style="Subtitle.TLabel").grid(
@@ -283,12 +361,12 @@ class UncompressApp:
         )
         self.progress_bar.grid(row=5, column=0, sticky="ew", pady=(8, 0))
 
-        log_frame = ttk.LabelFrame(outer, text=" Журнал ", padding=6)
-        log_frame.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
-        log_frame.columnconfigure(0, weight=1)
-        log_frame.rowconfigure(0, weight=1)
+        self.log_frame = ttk.LabelFrame(outer, text="", padding=6)
+        self.log_frame.grid(row=6, column=0, sticky="nsew", pady=(12, 0))
+        self.log_frame.columnconfigure(0, weight=1)
+        self.log_frame.rowconfigure(0, weight=1)
         self.log = tk.Text(
-            log_frame,
+            self.log_frame,
             height=10,
             wrap="word",
             state="disabled",
@@ -298,7 +376,7 @@ class UncompressApp:
             pady=6,
         )
         self.log.grid(row=0, column=0, sticky="nsew")
-        scrollbar = ttk.Scrollbar(log_frame, command=self.log.yview)
+        scrollbar = ttk.Scrollbar(self.log_frame, command=self.log.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.log.configure(yscrollcommand=scrollbar.set)
 
@@ -306,6 +384,67 @@ class UncompressApp:
             outer, textvariable=self.status_var, style="Status.TLabel"
         )
         self.status_label.grid(row=7, column=0, sticky="w", pady=(10, 0))
+
+        self._apply_lang(initial_lang)
+
+    # -- language ---------------------------------------------------------
+
+    def t(self, key: str, **kwargs) -> str:
+        return i18n.t(self.lang, key, **kwargs)
+
+    def set_language(self, code: str, persist: bool = True) -> None:
+        """Switch the whole window to *code* and remember the choice."""
+        self._apply_lang(code)
+        if persist:
+            self._save_lang(self.lang)
+
+    def _apply_lang(self, code: str) -> None:
+        if code not in i18n.LANGUAGES:
+            code = i18n.DEFAULT
+        self.lang = code
+        self.flags.set_lang(code)
+        self.title_label.configure(text=self.t("title"))
+        self.subtitle_label.configure(text=self.t("subtitle"))
+        self.source_box.configure(text=self.t("source_box"))
+        self.source_label.configure(text=self.t("series_file"))
+        self.source_button.configure(text=self.t("browse"))
+        self.output_box.configure(text=self.t("output_box"))
+        self.output_label.configure(text=self.t("folder"))
+        self.output_button.configure(text=self.t("browse"))
+        self.output_hint.configure(text=self.t("output_hint"))
+        self.anon_check.configure(text=self.t("anon"))
+        self.private_check.configure(text=self.t("keep_private"))
+        self.run_button.configure(text=self.t("unpack"))
+        self.open_button.configure(text=self.t("open_folder"))
+        self.log_frame.configure(text=self.t("log"))
+        self._render_status()
+        path = self.input_var.get().strip().strip('"')
+        if path and os.path.isfile(path):
+            self.update_info(path)
+
+    @staticmethod
+    def _config_path() -> str:
+        base = os.environ.get("APPDATA") or os.path.join(
+            os.path.expanduser("~"), ".config"
+        )
+        return os.path.join(base, "uncompressMRI", "config.json")
+
+    def _load_lang(self) -> str:
+        try:
+            with open(self._config_path(), encoding="utf-8") as handle:
+                code = str(json.load(handle).get("lang", ""))
+        except (OSError, ValueError):
+            return i18n.DEFAULT
+        return code if code in i18n.LANGUAGES else i18n.DEFAULT
+
+    def _save_lang(self, code: str) -> None:
+        try:
+            path = self._config_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"lang": code}, handle)
+        except OSError:
+            pass
 
     # -- helpers ----------------------------------------------------------
 
@@ -320,25 +459,34 @@ class UncompressApp:
         self.log.delete("1.0", "end")
         self.log.configure(state="disabled")
 
-    def set_status(self, text: str, kind: str = "Idle") -> None:
-        self.status_label.configure(style=_STATUS_STYLES.get(kind, "Status.TLabel"))
-        self.status_var.set(text)
+    def set_status(self, key: str, kind: str = "Idle", **kwargs) -> None:
+        self._status_key = key
+        self._status_kind = kind
+        self._status_args = kwargs
+        self._render_status()
+
+    def _render_status(self) -> None:
+        self.status_label.configure(
+            style=_STATUS_STYLES.get(self._status_kind, "Status.TLabel")
+        )
+        self.status_var.set(self.t(self._status_key, **self._status_args))
 
     def set_source(self, path: str, output: str | None = None) -> None:
         """Fill in the file fields and refresh the header information."""
         self.input_var.set(path)
         self.output_var.set(output or os.path.splitext(path)[0] + "_slices")
         self.update_info(path)
-        self.set_status("Файл выбран")
+        self.set_status("status_selected")
 
     def update_info(self, path: str) -> None:
-        self.info_label.configure(text="Читаю заголовок…")
+        self.info_label.configure(text=self.t("reading"))
+        lang = self.lang
 
         def job() -> None:
             try:
-                self.messages.put(("info", describe(path, compact=True)))
+                self.messages.put(("info", describe(path, compact=True, lang=lang)))
             except Exception as exc:  # noqa: BLE001 - shown to the user
-                self.messages.put(("info", "Не удалось прочитать заголовок: %s" % exc))
+                self.messages.put(("info", i18n.t(lang, "read_failed", error=exc)))
 
         threading.Thread(target=job, daemon=True).start()
 
@@ -346,36 +494,41 @@ class UncompressApp:
 
     def choose_input(self) -> None:
         path = self._filedialog.askopenfilename(
-            title="Выберите файл DICOM",
-            filetypes=[("DICOM", "*.dcm *.DCM *.ima *.IMA"), ("Все файлы", "*")],
+            title=self.t("dialog_open"),
+            filetypes=[
+                ("DICOM", "*.dcm *.DCM *.ima *.IMA"),
+                (self.t("all_files"), "*"),
+            ],
         )
         if path:
             self.set_source(path)
 
     def choose_output(self) -> None:
-        path = self._filedialog.askdirectory(title="Выберите папку результата")
+        path = self._filedialog.askdirectory(title=self.t("dialog_out"))
         if path:
             self.output_var.set(path)
 
     def open_output(self) -> None:
         path = self.output_var.get().strip().strip('"')
         if not path or not os.path.isdir(path):
-            self._messagebox.showinfo("Папка не найдена", "Сначала выполните распаковку.")
+            self._messagebox.showinfo(
+                self.t("folder_missing"), self.t("folder_missing_text")
+            )
             return
         try:
             _open_folder(path)
         except Exception as exc:  # noqa: BLE001 - system dependent
-            self._messagebox.showerror("Не удалось открыть папку", str(exc))
+            self._messagebox.showerror(self.t("open_failed"), str(exc))
 
     def start(self) -> None:
         if self._worker is not None and self._worker.is_alive():
             return
         source = self.input_var.get().strip().strip('"')
         if not source:
-            self._messagebox.showwarning("Нет файла", "Выберите файл серии.")
+            self._messagebox.showwarning(self.t("no_file"), self.t("no_file_text"))
             return
         if not os.path.isfile(source):
-            self._messagebox.showerror("Файл не найден", source)
+            self._messagebox.showerror(self.t("file_missing"), source)
             return
         target = self.output_var.get().strip().strip('"')
         if not target:
@@ -392,9 +545,9 @@ class UncompressApp:
         self.progress_text.set("")
         self.open_button.configure(state="disabled")
         self.run_button.configure(state="disabled")
-        self.set_status("Распаковка…", "Busy")
-        self.append_log("Источник: %s" % source)
-        self.append_log("Результат: %s" % target)
+        self.set_status("status_busy", "Busy")
+        self.append_log(self.t("log_source", path=source))
+        self.append_log(self.t("log_output", path=target))
 
         def on_progress(done: int, total: int) -> None:
             self.messages.put(("progress", (done, total)))
@@ -436,21 +589,23 @@ class UncompressApp:
             self.append_log("")
             self.append_log(_summary(report))
             for warning in report.warnings:
-                self.append_log("ВНИМАНИЕ: %s" % warning)
+                self.append_log(self.t("log_warning", text=warning))
             self.run_button.configure(state="normal")
             self.open_button.configure(state="normal")
             self.set_status(
-                "Готово: %d срез(ов) в %d сери(ях) → %s"
-                % (report.frame_count, len(report.series), report.output_dir),
+                "status_done",
                 "Ok",
+                frames=report.frame_count,
+                series=len(report.series),
+                path=report.output_dir,
             )
         else:
-            self.append_log("ОШИБКА: %s" % payload)
+            self.append_log(self.t("log_error", text=payload))
             self.progress_var.set(0.0)
             self.progress_text.set("")
             self.run_button.configure(state="normal")
-            self.set_status("Ошибка", "Error")
-            self._messagebox.showerror("Не удалось распаковать", str(payload))
+            self.set_status("status_error", "Error")
+            self._messagebox.showerror(self.t("error_title"), str(payload))
 
         self.root.after(80, self.poll)
 

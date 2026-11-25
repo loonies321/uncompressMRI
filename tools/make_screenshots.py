@@ -5,8 +5,10 @@ Needs a real X display plus ImageMagick (``import``) and ffmpeg::
     python -m pip install pillow
     python tools/make_screenshots.py
 
-Writes docs/gui-main.png, docs/gui-done.png, docs/gui-howto.png,
-docs/gui-howto-en.png and docs/demo.gif.
+Writes docs/gui-main.png, docs/gui-main-en.png, docs/gui-done.png,
+docs/gui-howto.png, docs/gui-howto-en.png and docs/demo.gif. The English
+screenshots are taken from the real window switched to English, not from the
+Russian one with translated arrows.
 """
 
 from __future__ import annotations
@@ -162,7 +164,7 @@ def main() -> int:
     root.minsize(780, 620)
     root.attributes("-topmost", True)
 
-    app = UncompressApp(root)
+    app = UncompressApp(root, lang="ru")
     root.after(80, app.poll)
     _center_window(root)
 
@@ -183,9 +185,52 @@ def main() -> int:
             (1, "Choose the\nseries file", widget_box(app, app.source_entry)),
             (2, "Check the\noutput folder", widget_box(app, app.output_entry)),
             (3, "Enable\nanonymization", widget_box(app, app.anon_check)),
-            (4, "Press\nРАСПАКОВАТЬ", widget_box(app, app.run_button)),
+            (4, "Press\nUNPACK", widget_box(app, app.run_button)),
             (5, "Watch the log\nand the counter", widget_box(app, app.log)),
         ]
+
+    def info_ready() -> bool:
+        text = app.info_label.cget("text")
+        return bool(text) and "Читаю" not in text and "Reading" not in text
+
+    def wait_info(then) -> None:
+        def check() -> None:
+            if info_ready():
+                then()
+            else:
+                root.after(100, check)
+
+        root.after(100, check)
+
+    def capture_ru() -> None:
+        clean = os.path.join(DOCS, "gui-main.png")
+        grab(root, clean)
+        annotate(
+            clean,
+            os.path.join(DOCS, "gui-howto.png"),
+            targets_ru(),
+            "uncompressMRI %s — что нажимать" % __version__,
+        )
+        app.set_language("en", persist=False)
+        wait_info(capture_en)
+
+    def capture_en() -> None:
+        root.update_idletasks()
+        clean = os.path.join(DOCS, "gui-main-en.png")
+        grab(root, clean)
+        annotate(
+            clean,
+            os.path.join(DOCS, "gui-howto-en.png"),
+            targets_en(),
+            "uncompressMRI %s — what to click" % __version__,
+        )
+        app.set_language("ru", persist=False)
+        wait_info(start_demo)
+
+    def start_demo() -> None:
+        recorder["proc"] = record(root, RAW_VIDEO)
+        state["step"] = "run"
+        root.after(700, app.start)
 
     def stop_recording() -> None:
         proc = recorder["proc"]
@@ -198,39 +243,17 @@ def main() -> int:
         grab(root, os.path.join(DOCS, "gui-done.png"))
         root.after(200, root.quit)
 
-    def begin() -> None:
-        app.start()
-        state["step"] = "run"
-
     def tick() -> None:
-        step = state["step"]
-        info = app.info_label.cget("text")
-        if step == "load" and info and "Читаю" not in info:
-            clean = os.path.join(DOCS, "gui-main.png")
-            grab(root, clean)
-            annotate(
-                clean,
-                os.path.join(DOCS, "gui-howto.png"),
-                targets_ru(),
-                "uncompressMRI %s — что нажимать" % __version__,
-            )
-            annotate(
-                clean,
-                os.path.join(DOCS, "gui-howto-en.png"),
-                targets_en(),
-                "uncompressMRI %s — what to click" % __version__,
-            )
-            recorder["proc"] = record(root, RAW_VIDEO)
-            state["step"] = "starting"
-            root.after(700, begin)
-        elif step == "run" and app.status_var.get().startswith("Готово"):
+        status = app.status_var.get()
+        if state["step"] == "run" and status.startswith(("Готово", "Done")):
             state["step"] = "settle"
             root.after(1800, stop_recording)
-        elif step == "error" and app.status_var.get() == "Ошибка":
+        elif status in ("Ошибка", "Error"):
             root.after(500, root.quit)
         root.after(100, tick)
 
     root.after(150, lambda: app.set_source(SAMPLE_COPY, DEMO_OUT))
+    wait_info(capture_ru)
     root.after(100, tick)
     root.mainloop()
     root.destroy()

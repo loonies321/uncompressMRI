@@ -47,6 +47,10 @@ geometry of **each** frame instead of an average:
 
 Hotkeys: `Enter` — unpack, `Ctrl+O` — choose a file, `Esc` — close.
 
+The interface language is switched with the **RU / EN** flags in the top-right
+corner (the flags are painted on a `Canvas`, no image files involved) and the
+choice is remembered between runs.
+
 ![Demo](docs/demo.gif)
 
 ## What you get in the folder
@@ -150,7 +154,7 @@ flowchart LR
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest tests -q      # 17 tests
+python -m pytest tests -q      # 22 tests
 ```
 
 The tests build a synthetic enhanced file (Philips-like layout, 2 stacks,
@@ -198,8 +202,8 @@ only builds for the OS it runs on.
   result should be checked by eye.
 * DWI with several gradient directions is grouped by b-value; directions are
   not split into separate series.
-* The GUI is currently in Russian (labels are plain `ttk` strings and easy to
-  localize — open an issue if you need English).
+* The GUI is available in Russian and English; other languages need only one
+  more dictionary in `i18n.py`.
 
 ## Troubleshooting
 

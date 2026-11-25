@@ -36,9 +36,11 @@ import numpy as np
 import pydicom
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
+import i18n
+
 log = logging.getLogger(__name__)
 
-__version__ = "2.1.2"
+__version__ = "2.2.0"
 
 MR_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.4"
 ENHANCED_MR_STORAGE = "1.2.840.10008.5.1.4.1.1.4.1"
@@ -966,7 +968,7 @@ def shamanstvo(multifile: str, normal_files_folder: str | None = None) -> list[s
     return convert_file(multifile).output_files
 
 
-def describe(path: str, *, compact: bool = False) -> str:
+def describe(path: str, *, compact: bool = False, lang: str = "ru") -> str:
     """Return a short human readable summary of a DICOM file."""
     ds = pydicom.dcmread(path, stop_before_pixels=True)
     frames = _as_int(ds.get("NumberOfFrames")) or 1
@@ -976,7 +978,11 @@ def describe(path: str, *, compact: bool = False) -> str:
     bits = int(ds.get("BitsAllocated", 0))
     series = str(ds.get("SeriesDescription", "") or "")
     if compact:
-        parts = ["кадров: %d" % frames, "%d×%d" % (rows, columns), "%d бит" % bits]
+        parts = [
+            i18n.t(lang, "frames_n", n=frames),
+            "%d×%d" % (rows, columns),
+            i18n.t(lang, "bits_n", n=bits),
+        ]
         if series:
             parts.append(series)
         return "%s — %s\n%s" % (os.path.basename(path), sop_class, " · ".join(parts))
