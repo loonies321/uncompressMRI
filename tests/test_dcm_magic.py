@@ -1,0 +1,252 @@
+from __future__ import annotations
+
+import glob
+import os
+
+import numpy as np
+import pydicom
+import pytest
+from conftest import (
+    FRAME_OF_REFERENCE_UID,
+    STUDY_UID,
+    Stack,
+    build_enhanced_file,
+)
+
+import dcm_magic
+from dcm_magic import ConversionError, convert_file
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _read_all(directory):
+    return [pydicom.dcmread(p) for p in sorted(glob.glob(os.path.join(directory, "*.dcm")))]
+
+
+def test_splits_stacks_into_separate_series(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    report = convert_file(enhanced_file["path"], str(out))
+
+    assert report.frame_count == 5
+    assert len(report.series) == 2
+    assert [s.frame_count for s in report.series] == [3, 2]
+    assert len(report.output_files) == 5
+
+    datasets = _read_all(str(out))
+    assert len({ds.SeriesInstanceUID for ds in datasets}) == 2
+    assert len({ds.SOPInstanceUID for ds in datasets}) == 5
+
+
+def test_pixels_are_preserved_exactly(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+    pixels = enhanced_file["pixels"]
+
+    for ds in _read_all(str(out)):
+        # Match the source frame by its slice position.
+        source_index = next(
+            i
+            for i, (_, _, position) in enumerate(enhanced_file["frames"])
+            if np.allclose(
+                [float(v) for v in ds.ImagePositionPatient], position, atol=1e-6
+            )
+        )
+        np.testing.assert_array_equal(ds.pixel_array, pixels[source_index])
+
+
+def test_study_and_geometry_are_consistent(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+    datasets = _read_all(str(out))
+
+    assert all(str(ds.StudyInstanceUID) == STUDY_UID for ds in datasets)
+    assert all(str(ds.FrameOfReferenceUID) == FRAME_OF_REFERENCE_UID for ds in datasets)
+    assert all(ds.SOPClassUID == dcm_magic.MR_IMAGE_STORAGE for ds in datasets)
+
+    for ds in datasets:
+        assert ds.Rows == enhanced_file["rows"]
+        assert ds.Columns == enhanced_file["columns"]
+        assert len(ds.ImagePositionPatient) == 3
+        assert len(ds.ImageOrientationPatient) == 6
+        assert ds.BitsAllocated == 16
+        assert ds.BitsStored == 12
+        assert ds.HighBit == 11
+        assert ds.PixelRepresentation == 0
+        assert ds.SamplesPerPixel == 1
+        assert ds.PhotometricInterpretation == "MONOCHROME2"
+        assert "NumberOfFrames" not in ds
+        assert (0x5200, 0x9230) not in ds
+        assert (0x5200, 0x9229) not in ds
+        assert ds.file_meta.TransferSyntaxUID == dcm_magic.ExplicitVRLittleEndian
+        assert len(ds.PixelData) == ds.Rows * ds.Columns * 2
+
+
+def test_slice_location_matches_position(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+
+    for ds in _read_all(str(out)):
+        position = np.asarray([float(v) for v in ds.ImagePositionPatient])
+        orientation = [float(v) for v in ds.ImageOrientationPatient]
+        normal = np.cross(orientation[:3], orientation[3:])
+        normal /= np.linalg.norm(normal)
+        assert float(ds.SliceLocation) == pytest.approx(float(position @ normal), abs=1e-5)
+
+
+def test_instance_numbers_start_at_one_per_series(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+    datasets = _read_all(str(out))
+
+    by_series: dict[str, list[pydicom.Dataset]] = {}
+    for ds in datasets:
+        by_series.setdefault(str(ds.SeriesInstanceUID), []).append(ds)
+    for series in by_series.values():
+        numbers = sorted(int(ds.InstanceNumber) for ds in series)
+        assert numbers == list(range(1, len(series) + 1))
+
+
+def test_patient_data_is_not_hardcoded(tmp_path, enhanced_file):
+    """Regression: the old code overwrote PatientName with a fixed person."""
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+
+    for ds in _read_all(str(out)):
+        assert str(ds.PatientName) == enhanced_file["patient_name"]
+        assert str(ds.PatientID) == enhanced_file["patient_id"]
+
+
+def test_anonymize(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out), anonymize=True)
+    datasets = _read_all(str(out))
+
+    for ds in datasets:
+        assert str(ds.PatientName) == "ANONYMOUS"
+        assert str(ds.PatientID) == "ANONYMOUS"
+        assert str(ds.InstitutionName) == ""
+        assert str(ds.StudyInstanceUID) != STUDY_UID
+
+
+def test_private_tags_are_removed_by_default(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+    for ds in _read_all(str(out)):
+        assert not [element for element in ds if element.tag.is_private]
+
+
+def test_output_is_deterministic(tmp_path, enhanced_file):
+    out1 = tmp_path / "out1"
+    out2 = tmp_path / "out2"
+    first = convert_file(enhanced_file["path"], str(out1))
+    second = convert_file(enhanced_file["path"], str(out2))
+
+    assert [s.series_instance_uid for s in first.series] == [
+        s.series_instance_uid for s in second.series
+    ]
+    assert [
+        str(pydicom.dcmread(path).SOPInstanceUID) for path in first.output_files
+    ] == [str(pydicom.dcmread(path).SOPInstanceUID) for path in second.output_files]
+
+
+def test_single_frame_classic_file_is_passed_through(tmp_path):
+    """A normal single-frame MR image must produce exactly one slice."""
+    source = pydicom.dcmread(os.path.join(REPO_ROOT, "etalon.dcm"))
+    path = tmp_path / "single.dcm"
+    source.save_as(str(path), enforce_file_format=True)
+
+    out = tmp_path / "out"
+    report = convert_file(str(path), str(out))
+    assert report.frame_count == 1
+    (ds,) = _read_all(str(out))
+    assert ds.SOPClassUID == dcm_magic.MR_IMAGE_STORAGE
+    np.testing.assert_array_equal(ds.pixel_array, source.pixel_array)
+
+
+def test_missing_file_raises():
+    with pytest.raises(ConversionError):
+        convert_file("/definitely/not/here.dcm")
+
+
+def test_default_output_directory_is_next_to_input(tmp_path, enhanced_file):
+    report = convert_file(enhanced_file["path"])
+    expected = os.path.join(tmp_path, "enhanced_slices")
+    assert report.output_dir == os.path.abspath(expected)
+    assert os.path.isdir(expected)
+
+
+def test_legacy_template_argument_is_ignored(tmp_path, enhanced_file, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    files = dcm_magic.shamanstvo(enhanced_file["path"], "etalonnoeMRI")
+    assert len(files) == 5
+    assert all(os.path.isabs(path) for path in files)
+
+
+def test_progress_callback_reports_every_slice(tmp_path, enhanced_file):
+    out = tmp_path / "out"
+    seen = []
+
+    report = convert_file(
+        enhanced_file["path"],
+        str(out),
+        progress=lambda done, total: seen.append((done, total)),
+    )
+
+    assert report.frame_count == 5
+    assert [done for done, _ in seen] == [1, 2, 3, 4, 5]
+    assert all(total == report.frame_count for _, total in seen)
+
+
+SAMPLE = os.path.join(REPO_ROOT, "IMG-0001-00001.dcm")
+
+
+@pytest.mark.skipif(
+    not os.path.exists(SAMPLE), reason="sample file not available"
+)
+def test_real_philips_sample(tmp_path):
+    """End-to-end check on the repository sample (3 localizer stacks)."""
+    source = pydicom.dcmread(SAMPLE)
+    out = tmp_path / "out"
+    report = convert_file(SAMPLE, str(out))
+
+    assert report.frame_count == int(source.NumberOfFrames)
+    assert len(report.series) == 3
+    assert sorted(s.frame_count for s in report.series) == [1, 1, 3]
+
+    positions = {
+        i: tuple(round(float(v), 3) for v in item[0x0020, 0x9113].value[0][0x0020, 0x0032].value)
+        for i, item in enumerate(source[0x5200, 0x9230].value)
+    }
+    for ds in _read_all(str(out)):
+        key = tuple(round(float(v), 3) for v in ds.ImagePositionPatient)
+        index = next(i for i, pos in positions.items() if pos == key)
+        np.testing.assert_array_equal(ds.pixel_array, source.pixel_array[index])
+
+
+def test_multiple_stacks_with_same_orientation_are_kept_apart(tmp_path):
+    stacks = [
+        Stack("1", (1.0, 0.0, 0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 10.0), (0.0, 0.0, 1.0), 2),
+        Stack("2", (1.0, 0.0, 0.0, 0.0, 1.0, 0.0), (0.0, 0.0, -10.0), (0.0, 0.0, 1.0), 2),
+    ]
+    path = tmp_path / "two_stacks.dcm"
+    build_enhanced_file(path, stacks=stacks)
+
+    report = convert_file(str(path), str(tmp_path / "out"))
+    assert len(report.series) == 2
+    assert [s.frame_count for s in report.series] == [2, 2]
+
+
+def test_diffusion_b_values_become_separate_series(tmp_path):
+    stack = Stack("1", (1.0, 0.0, 0.0, 0.0, 1.0, 0.0), (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 2)
+    path = tmp_path / "dwi.dcm"
+    # Frame 0/1 -> b=0, frame 2/3 -> b=1000
+    build_enhanced_file(
+        path,
+        stacks=[stack, Stack("1", stack.orientation, (0.0, 0.0, 10.0), stack.normal, 2)],
+        b_value_by_frame={0: 0.0, 1: 0.0, 2: 1000.0, 3: 1000.0},
+    )
+
+    report = convert_file(str(path), str(tmp_path / "out"))
+    assert len(report.series) == 2
+    assert sorted(s.frame_count for s in report.series) == [2, 2]
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

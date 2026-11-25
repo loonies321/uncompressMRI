@@ -1,0 +1,95 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest tests -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: "x64"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+
+      - name: Build executable
+        run: >
+          python -m PyInstaller
+          --noconfirm --clean --onefile --windowed
+          --name uncompressMRI
+          --collect-data pydicom
+          main.py
+
+      - name: Smoke test (CLI mode inside the frozen exe)
+        shell: pwsh
+        run: |
+          # A --windowed exe is a GUI-subsystem binary: PowerShell does not wait
+          # for it with "&" and $LASTEXITCODE stays empty, so use Start-Process.
+          function Invoke-FrozenExe {
+            param([string[]]$Arguments)
+            $process = Start-Process -FilePath "dist/uncompressMRI.exe" `
+              -ArgumentList $Arguments -Wait -PassThru
+            Write-Host "exit code: $($process.ExitCode)"
+            return $process.ExitCode
+          }
+
+          if ((Invoke-FrozenExe @("--version")) -ne 0) { throw "exe --version failed" }
+
+          # Real enhanced multi-frame MRI: 5 frames in 3 stacks.
+          if ((Invoke-FrozenExe @("IMG-0001-00001.dcm", "-o", "smoke/enhanced", "-q")) -ne 0) {
+            throw "enhanced conversion failed"
+          }
+          python tests/check_frozen_output.py "smoke/enhanced" --frames 5 --series 3
+          if ($LASTEXITCODE -ne 0) { throw "enhanced output check failed" }
+
+          # Ordinary single-frame slice (etalon.dcm) must pass through as one file.
+          if ((Invoke-FrozenExe @("etalon.dcm", "-o", "smoke/single", "-q")) -ne 0) {
+            throw "single-frame conversion failed"
+          }
+          python tests/check_frozen_output.py "smoke/single" --frames 1 --series 1
+          if ($LASTEXITCODE -ne 0) { throw "single-frame output check failed" }
+
+          Get-ChildItem "dist/uncompressMRI.exe" | Format-List Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: uncompressMRI-windows-x64
+          path: dist/uncompressMRI.exe
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            "dist/uncompressMRI.exe" `
+            --title "uncompressMRI $env:GITHUB_REF_NAME" `
+            --notes "Windows x64 build. Download uncompressMRI.exe and run it - no Python required."
