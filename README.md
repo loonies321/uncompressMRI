@@ -220,3 +220,21 @@ Apache License 2.0 — см. [LICENCE.txt](LICENCE.txt).
 
 `инструкция.pdf` в репозитории описывает версию 1.x (с папкой
 `etalonnoeMRI`) и устарела — актуальна эта README.
+
+---
+
+## English summary
+
+`uncompressMRI` converts **enhanced (multi-frame) MRI DICOM** (Philips
+`Enhanced MR Image Storage`) into plain **single-frame `MR Image Storage`**
+slices that Varian **Eclipse** / **Aria** and other treatment planning
+systems (Oncentra, Monaco, RayStation) can import.
+
+It is a DICOM splitter/converter for radiotherapy: per-frame geometry
+(position, orientation, spacing, thickness), series splitting by
+stack/echo/b-value, deterministic UIDs, preserved `StudyInstanceUID`,
+anonymization, Windows `.exe`, CLI and GUI.
+
+<sub>dicom · dicom converter · dicom splitter · enhanced MR · multi-frame ·
+MRI · radiotherapy · radiation oncology · medical physics · treatment planning
+system · Varian Eclipse · Varian Aria · Philips · pydicom · Python</sub>
