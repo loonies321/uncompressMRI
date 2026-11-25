@@ -38,7 +38,7 @@ from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
 log = logging.getLogger(__name__)
 
-__version__ = "2.1.1"
+__version__ = "2.1.2"
 
 MR_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.4"
 ENHANCED_MR_STORAGE = "1.2.840.10008.5.1.4.1.1.4.1"

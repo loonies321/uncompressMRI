@@ -20,8 +20,8 @@ import tkinter as tk
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from dcm_magic import __version__  # noqa: E402
-from main import UncompressApp, _center_window  # noqa: E402
+from dcm_magic import __version__
+from main import UncompressApp, _center_window
 
 DOCS = os.path.join(ROOT, "docs")
 SAMPLE = os.path.join(ROOT, "IMG-0001-00001.dcm")
