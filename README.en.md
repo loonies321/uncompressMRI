@@ -5,6 +5,7 @@ files that Eclipse / Aria, Monaco and other treatment planning systems can
 import.**
 
 [![Release](https://img.shields.io/github/v/release/loonies321/uncompressMRI?style=flat-square)](https://github.com/loonies321/uncompressMRI/releases/latest)
+[![Tests](https://github.com/loonies321/uncompressMRI/actions/workflows/ci.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/ci.yml)
 [![Windows build](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENCE.txt)
