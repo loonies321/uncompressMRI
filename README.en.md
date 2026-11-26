@@ -300,5 +300,7 @@ If the tool saved you time, a star helps other medical physicists find it.
 
 Apache License 2.0 — see [LICENCE.txt](LICENCE.txt).
 
+Third-party components and their licenses — [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 `инструкция.pdf` in the repository describes version 1.x (with the
 `etalonnoeMRI` folder) and is outdated — this README is the current one.

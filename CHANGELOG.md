@@ -39,3 +39,5 @@
 
 - README (RU/EN), GUI screenshots, social preview and issue template updated
   for MR/CT support and version 2.4.0.
+- Added `THIRD_PARTY_NOTICES.md` for the MIT-licensed portions adapted from
+  DICOM_TPS_Harmonizer.

@@ -3,6 +3,9 @@ Convert Enhanced (multi-frame) DICOM MR/CT series into single-frame
 ``MR Image Storage`` / ``CT Image Storage`` instances that a treatment
 planning system (Eclipse / Aria, Oncentra, Monaco, ...) can import.
 
+Portions of the Enhanced DICOM dimension/charset handling are adapted from
+DICOM_TPS_Harmonizer (MIT); see THIRD_PARTY_NOTICES.md.
+
 The original implementation pasted each frame into a hard-coded
 "reference slice" file (``etalonnoeMRI``) and hard-coded the patient
 name.  This module instead derives every single-frame object from the

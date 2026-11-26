@@ -304,6 +304,8 @@ Dimension Index (позиция среза, Instance Number, время кадр
 
 Apache License 2.0 — см. [LICENCE.txt](LICENCE.txt).
 
+Сторонние компоненты и их лицензии — [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 `инструкция.pdf` в репозитории описывает версию 1.x (с папкой
 `etalonnoeMRI`) и устарела — актуальна эта README.
 
