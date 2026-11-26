@@ -30,7 +30,7 @@
 
 ### Требования
 
-- Python 3.9+;
+- Python 3.10+;
 - Windows 10/11 x64 — основная платформа для exe;
 - Linux/macOS — для CLI и тестов; GUI требует `tkinter` (`python3-tk` в Debian/Ubuntu);
 - `pydicom`, `numpy` — runtime-зависимости.

@@ -7,7 +7,7 @@ import.**
 [![Release](https://img.shields.io/github/v/release/loonies321/uncompressMRI?style=flat-square)](https://github.com/loonies321/uncompressMRI/releases/latest)
 [![Tests](https://github.com/loonies321/uncompressMRI/actions/workflows/ci.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/ci.yml)
 [![Windows build](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml)
-[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENCE.txt)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
@@ -175,7 +175,7 @@ flowchart LR
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest tests -q      # 27 tests
+python -m pytest tests -q      # 28 tests
 ```
 
 The tests build a synthetic enhanced file (Philips-like layout, 2 stacks,
@@ -203,7 +203,7 @@ python main.py                     # GUI
 python main.py file.dcm -o out     # CLI
 ```
 
-Python 3.9+ is required (tested on 3.11).
+Python 3.10+ is required (tested on 3.11).
 
 ### Build the exe locally (Windows)
 
