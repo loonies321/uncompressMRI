@@ -4,8 +4,8 @@
 
 | Версия | Поддержка |
 |---|---|
-| 2.3.x (последний релиз) | да, исправления безопасности выходят патч-релизом |
-| 2.2.x и старше | нет, обновитесь до 2.3.x |
+| 2.4.x (последний релиз) | да, исправления безопасности выходят патч-релизом |
+| 2.3.x и старше | нет, обновитесь до 2.4.x |
 
 ## Как сообщить
 
@@ -82,4 +82,4 @@
 
 ## English summary
 
-Supported: 2.3.x. Public issues are welcome, including criticism. For an unpatched vulnerability or patient data, a private [security advisory](https://github.com/loonies321/uncompressMRI/security/advisories/new) is preferred, not required. Never attach real patient DICOM data. The person who posts DICOM, screenshots or logs is responsible for anonymization; maintainers remove such material when notified but do not moderate every message and are not responsible for participants' publications. In scope: parser crashes/DoS, path traversal, unsafe file overwrite, PHI leakage into logs/names/errors, dependency and release-integrity issues. Acknowledge within 72 hours, triage within 7 days, coordinated disclosure around 90 days.
+Supported: 2.4.x. Public issues are welcome, including criticism. For an unpatched vulnerability or patient data, a private [security advisory](https://github.com/loonies321/uncompressMRI/security/advisories/new) is preferred, not required. Never attach real patient DICOM data. The person who posts DICOM, screenshots or logs is responsible for anonymization; maintainers remove such material when notified but do not moderate every message and are not responsible for participants' publications. In scope: parser crashes/DoS, path traversal, unsafe file overwrite, PHI leakage into logs/names/errors, dependency and release-integrity issues. Acknowledge within 72 hours, triage within 7 days, coordinated disclosure around 90 days.

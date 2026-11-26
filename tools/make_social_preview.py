@@ -91,7 +91,7 @@ def main() -> None:
     d.text((64, 92), "OPEN SOURCE  ·  APACHE-2.0", font=badge, fill=(126, 178, 226))
     d.text((62, 132 + (74 - title_size) // 2), title_text, font=title, fill=(245, 249, 253))
 
-    lines = ["Enhanced multi-frame MRI →", "single-frame DICOM for", "Eclipse / Aria / Monaco"]
+    lines = ["Enhanced multi-frame MR/CT →", "single-frame DICOM for", "Eclipse / Aria / Monaco"]
     y = 252
     for line in lines:
         d.text((64, y), line, font=subtitle, fill=(206, 221, 236))
@@ -100,7 +100,7 @@ def main() -> None:
     d.text((64, 402), "Windows .exe  ·  CLI  ·  GUI  ·  no Python required", font=note, fill=(143, 179, 217))
     d.text((64, 446), "github.com/loonies321/uncompressMRI", font=small, fill=(110, 150, 190))
 
-    d.text((652, 532), "uncompressMRI 2.3.1  ·  Windows x64", font=small, fill=(150, 180, 210))
+    d.text((652, 532), "uncompressMRI 2.4.0  ·  Windows x64", font=small, fill=(150, 180, 210))
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     img.convert("RGB").save(OUT, "PNG", optimize=True)

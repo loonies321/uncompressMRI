@@ -45,8 +45,15 @@ def build_enhanced_file(
     patient_name: str = "TEST^PATIENT",
     patient_id: str = "TESTID",
     b_value_by_frame: dict[int, float] | None = None,
+    modality: str = "MR",
+    sop_class: str = "1.2.840.10008.5.1.4.1.1.4.1",
+    frame_type_sequence_tag: tuple[int, int] = (0x0018, 0x9226),
+    image_type: list[str] | None = None,
+    dimension_pointers: tuple[tuple[int, int], ...] = ((0x0020, 0x9057),),
+    dimension_values_by_frame: dict[int, tuple[int, ...]] | None = None,
+    specific_character_set: str | None = None,
 ) -> dict:
-    """Write a synthetic enhanced MR file and return bookkeeping info."""
+    """Write a synthetic enhanced MR/CT file and return bookkeeping info."""
     if stacks is None:
         stacks = [
             Stack("1", (0.0, 1.0, 0.0, 0.0, 0.0, -1.0), (10.0, -20.0, 30.0), (-1.0, 0.0, 0.0), 3),
@@ -68,19 +75,19 @@ def build_enhanced_file(
     ) % 4096
 
     file_meta = FileMetaDataset()
-    file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.4.1"
+    file_meta.MediaStorageSOPClassUID = sop_class
     file_meta.MediaStorageSOPInstanceUID = "1.3.46.670589.11.99999.5.0.4.1"
     file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
     file_meta.ImplementationClassUID = "1.2.826.0.1.3680043.8.498.1"
 
     ds = Dataset()
     ds.file_meta = file_meta
-    ds.SOPClassUID = "1.2.840.10008.5.1.4.1.1.4.1"
+    ds.SOPClassUID = sop_class
     ds.SOPInstanceUID = "1.3.46.670589.11.99999.5.0.4.1"
     ds.StudyInstanceUID = STUDY_UID
     ds.SeriesInstanceUID = SERIES_UID
     ds.FrameOfReferenceUID = FRAME_OF_REFERENCE_UID
-    ds.Modality = "MR"
+    ds.Modality = modality
     ds.Manufacturer = "Philips Medical Systems"
     ds.ManufacturerModelName = "Achieva"
     ds.InstitutionName = "TEST HOSPITAL"
@@ -88,6 +95,8 @@ def build_enhanced_file(
     ds.PatientID = patient_id
     ds.PatientBirthDate = "19800101"
     ds.PatientSex = "M"
+    if specific_character_set:
+        ds.SpecificCharacterSet = specific_character_set
     ds.StudyDate = "20240101"
     ds.StudyTime = "120000"
     ds.SeriesDate = "20240101"
@@ -99,7 +108,10 @@ def build_enhanced_file(
     ds.SeriesDescription = "Synthetic enhanced"
     ds.AccessionNumber = "ACC123"
     ds.BodyPartExamined = "HEAD"
-    ds.ImageType = ["ORIGINAL", "PRIMARY", "T1", "NONE"]
+    ds.ImageType = image_type or (
+        ["ORIGINAL", "PRIMARY", "AXIAL"] if modality == "CT"
+        else ["ORIGINAL", "PRIMARY", "T1", "NONE"]
+    )
     ds.PixelPresentation = "MONOCHROME"
     ds.VolumetricProperties = "VOLUME"
     ds.VolumeBasedCalculationTechnique = "NONE"
@@ -123,8 +135,9 @@ def build_enhanced_file(
         [
             _item(
                 ((0x0020, 0x9164), "UI", "1.3.46.670589.11.99999.5.0.5"),
-                ((0x0020, 0x9165), "AT", (0x0020, 0x9057)),
+                ((0x0020, 0x9165), "AT", pointer),
             )
+            for pointer in dimension_pointers
         ]
     )
 
@@ -139,7 +152,7 @@ def build_enhanced_file(
     ds.SharedFunctionalGroupsSequence = Sequence(
         [
             _item(
-                ((0x0018, 0x9226), "SQ", Sequence([shared_frame_type])),
+                (frame_type_sequence_tag, "SQ", Sequence([shared_frame_type])),
                 ((0x0028, 0x9110), "SQ", Sequence([
                     _item(
                         ((0x0018, 0x0050), "DS", "5"),
@@ -157,6 +170,12 @@ def build_enhanced_file(
             ((0x0020, 0x9057), "UL", index + 1),
             ((0x0020, 0x9128), "UL", 1),
         )
+        if dimension_values_by_frame and frame_index in dimension_values_by_frame:
+            content.add_new(
+                (0x0020, 0x9157),
+                "UL",
+                list(dimension_values_by_frame[frame_index]),
+            )
         frame_item = _item(
                 ((0x0020, 0x9111), "SQ", Sequence([content])),
                 ((0x0020, 0x9113), "SQ", Sequence([
@@ -221,3 +240,14 @@ def build_enhanced_file(
 def enhanced_file(tmp_path):
     path = tmp_path / "enhanced.dcm"
     return build_enhanced_file(path)
+
+
+@pytest.fixture
+def enhanced_ct_file(tmp_path):
+    path = tmp_path / "enhanced_ct.dcm"
+    return build_enhanced_file(
+        path,
+        modality="CT",
+        sop_class="1.2.840.10008.5.1.4.1.1.2.1",
+        frame_type_sequence_tag=(0x0018, 0x9329),
+    )

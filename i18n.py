@@ -11,7 +11,7 @@ DEFAULT = "ru"
 
 STRINGS: dict[str, dict[str, str]] = {
     "ru": {
-        "title": "Распаковка enhanced MRI",
+        "title": "Распаковка enhanced MR/CT",
         "subtitle": "Multi-frame DICOM → посрезовые файлы для Eclipse / Aria / Monaco",
         "source_box": " Исходный файл ",
         "series_file": "Файл серии",
@@ -21,6 +21,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "output_hint": "Пусто → <имя файла>_slices рядом с исходным файлом",
         "anon": "Анонимизировать (ФИО и ID)",
         "keep_private": "Оставить приватные теги вендора",
+        "harmonize": "Нормализовать теги для TPS",
         "unpack": "РАСПАКОВАТЬ",
         "open_folder": "Открыть папку",
         "log": " Журнал ",
@@ -54,7 +55,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "flag_en": "English",
     },
     "en": {
-        "title": "Enhanced MRI unpacker",
+        "title": "Enhanced MR/CT unpacker",
         "subtitle": "Multi-frame DICOM → slices for Eclipse / Aria / Monaco",
         "source_box": " Source file ",
         "series_file": "Series file",
@@ -64,6 +65,7 @@ STRINGS: dict[str, dict[str, str]] = {
         "output_hint": "Empty → <file name>_slices next to the source file",
         "anon": "Anonymize (name and ID)",
         "keep_private": "Keep vendor private tags",
+        "harmonize": "Harmonize tags for TPS",
         "unpack": "UNPACK",
         "open_folder": "Open folder",
         "log": " Log ",

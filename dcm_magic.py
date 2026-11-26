@@ -1,7 +1,7 @@
 """
-Convert Enhanced (multi-frame) DICOM MRI series into single-frame
-``MR Image Storage`` instances that a treatment planning system
-(Eclipse / Aria, Oncentra, Monaco, ...) can import.
+Convert Enhanced (multi-frame) DICOM MR/CT series into single-frame
+``MR Image Storage`` / ``CT Image Storage`` instances that a treatment
+planning system (Eclipse / Aria, Oncentra, Monaco, ...) can import.
 
 The original implementation pasted each frame into a hard-coded
 "reference slice" file (``etalonnoeMRI``) and hard-coded the patient
@@ -41,11 +41,13 @@ import i18n
 
 log = logging.getLogger(__name__)
 
-__version__ = "2.3.1"
+__version__ = "2.4.0"
 
 MR_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.4"
 ENHANCED_MR_STORAGE = "1.2.840.10008.5.1.4.1.1.4.1"
 ENHANCED_MR_COLOR_STORAGE = "1.2.840.10008.5.1.4.1.1.4.3"
+CT_IMAGE_STORAGE = "1.2.840.10008.5.1.4.1.1.2"
+ENHANCED_CT_STORAGE = "1.2.840.10008.5.1.4.1.1.2.1"
 
 _UID_PREFIX = "2.25."  # UUID derived, no registration required (PS3.5 B.2)
 _IMPLEMENTATION_UID = generate_uid(
@@ -82,7 +84,9 @@ _TAG_DIMENSION_INDEX_POINTER = (0x0020, 0x9165)
 _SEQ_SHARED_GROUPS = (0x5200, 0x9229)
 _SEQ_PER_FRAME_GROUPS = (0x5200, 0x9230)
 _SEQ_DIMENSION_INDEX = (0x0020, 0x9222)
-_SEQ_FRAME_TYPE = (0x0018, 0x9226)  # MR Image Frame Type Sequence
+_SEQ_MR_FRAME_TYPE = (0x0018, 0x9226)  # MR Image Frame Type Sequence
+_SEQ_CT_FRAME_TYPE = (0x0018, 0x9329)  # CT Image Frame Type Sequence
+_SEQ_FRAME_TYPES = (_SEQ_MR_FRAME_TYPE, _SEQ_CT_FRAME_TYPE)
 _SEQ_PLANE_POSITION = (0x0020, 0x9113)
 _SEQ_PLANE_ORIENTATION = (0x0020, 0x9116)
 _SEQ_PIXEL_MEASURES = (0x0028, 0x9110)
@@ -92,6 +96,16 @@ _SEQ_FRAME_CONTENT = (0x0020, 0x9111)
 _SEQ_MR_ECHO = (0x0018, 0x9114)
 _SEQ_MR_DIFFUSION = (0x0018, 0x9117)
 _TAG_DIFFUSION_B_VALUE = (0x0018, 0x9087)
+
+# Only these Dimension Index pointers describe a different contrast/physics
+# series. Spatial, instance-number and timestamp dimensions are per-slice and
+# must not split one 3D volume into hundreds of single-slice series.
+_SERIES_SPLIT_DIMENSIONS = {
+    (0x0018, 0x9082),  # Effective Echo Time
+    (0x0018, 0x0082),  # Inversion Time
+    (0x0018, 0x1314),  # Flip Angle
+    (0x0018, 0x0080),  # Repetition Time
+}
 
 # Elements that describe the multi-frame *container* and must not end up in a
 # single-frame object.
@@ -247,9 +261,13 @@ def _collect_frames(ds: pydicom.Dataset) -> list[FrameInfo]:
 
         frame_content = _first_item(per_frame, _SEQ_FRAME_CONTENT) if per_frame else None
 
-        frame_type_value = _resolve(
-            per_frame, shared, ds, _SEQ_FRAME_TYPE, _TAG_FRAME_TYPE
-        )
+        frame_type_value = None
+        for frame_type_sequence in _SEQ_FRAME_TYPES:
+            frame_type_value = _resolve(
+                per_frame, shared, ds, frame_type_sequence, _TAG_FRAME_TYPE
+            )
+            if frame_type_value:
+                break
         if isinstance(frame_type_value, str):
             frame_type = tuple(frame_type_value.split("\\"))
         elif frame_type_value:
@@ -280,6 +298,8 @@ def _collect_frames(ds: pydicom.Dataset) -> list[FrameInfo]:
         if frame_content is not None and _TAG_DIMENSION_INDEX_VALUES in frame_content:
             raw = frame_content[_TAG_DIMENSION_INDEX_VALUES].value
             if raw is not None:
+                if isinstance(raw, (int, float, str)):
+                    raw = (raw,)
                 try:
                     dimension_values = tuple(int(v) for v in raw)
                 except (TypeError, ValueError):
@@ -360,28 +380,22 @@ def _dimension_pointers(ds: pydicom.Dataset) -> list[tuple[int, int]]:
     return pointers
 
 
-# Dimensions that are either already part of the series key or that would
-# explode one series into hundreds (diffusion gradient directions).
-_IGNORED_DIMENSIONS = {
-    _TAG_IN_STACK_POSITION,
-    _TAG_STACK_ID,
-    _TAG_TEMPORAL_INDEX,
-    _TAG_ECHO_NUMBERS,
-    (0x0018, 0x9089),  # Diffusion Gradient Orientation
-    (0x0018, 0x9079),  # Diffusion Directionality
-}
-
-
 def _extra_dimensions(
     pointers: Sequence[tuple[int, int]],
     values: Sequence[int] | None,
 ) -> tuple[tuple[tuple[int, int], int], ...]:
-    """Dimension index values (other than in-stack position) for grouping."""
+    """Return allowlisted contrast/physics dimensions for series grouping.
+
+    A Dimension Index Sequence may legitimately contain ``Image Position
+    Patient``, ``Instance Number`` or ``Frame Acquisition DateTime``.  Those
+    change on every slice and would turn one 3D volume into N single-slice
+    series, so only a small allowlist is used here.
+    """
     if not pointers or not values or len(pointers) != len(values):
         return ()
-    extras = []
+    extras: list[tuple[tuple[int, int], int]] = []
     for pointer, value in zip(pointers, values):
-        if pointer in _IGNORED_DIMENSIONS:
+        if pointer not in _SERIES_SPLIT_DIMENSIONS:
             continue
         extras.append((pointer, value))
     return tuple(extras)
@@ -568,13 +582,149 @@ class ConversionReport:
         return sum(series.frame_count for series in self.series)
 
 
+def _copy_dataset(
+    ds: pydicom.Dataset, *, copy_file_meta: bool = True
+) -> pydicom.Dataset:
+    """Return a cheap copy of *ds*.
+
+    ``copy.deepcopy`` of a whole Enhanced data set is surprisingly expensive:
+    the per-frame functional groups are copied only to be removed a few lines
+    later.  We copy the element dictionary (the DataElement objects themselves
+    are immutable in this code path) and the small file meta.
+    """
+    clone = copy.copy(ds)
+    clone._dict = dict(ds._dict)
+    clone.file_meta = (
+        copy.deepcopy(getattr(ds, "file_meta", None))
+        if copy_file_meta
+        else None
+    )
+    return clone
+
+
 def _build_base(ds: pydicom.Dataset) -> pydicom.Dataset:
     """Copy the source dataset and strip everything multi-frame specific."""
-    base = copy.deepcopy(ds)
+    base = _copy_dataset(ds, copy_file_meta=False)
     for tag in _CONTAINER_TAGS + _ENHANCED_ONLY_TAGS:
-        if tag in base:
-            del base[tag]
+        base.pop(tag, None)
     return base
+
+
+_TEXT_VRS = {"SH", "LO", "ST", "LT", "UT", "UC", "PN"}
+
+
+def _iter_text_values(ds: pydicom.Dataset):
+    """Yield decoded text values from *ds*, including nested sequences."""
+    for element in ds.iterall():
+        if element.VR not in _TEXT_VRS or element.value is None:
+            continue
+        values = (
+            element.value
+            if isinstance(element.value, (list, tuple))
+            else [element.value]
+        )
+        for value in values:
+            if value is None:
+                continue
+            yield str(value)
+
+
+def _normalize_charset(ds: pydicom.Dataset) -> str | None:
+    """Choose a charset Eclipse/Monaco can read and that can encode the text.
+
+    Returns the previous value when it had to be changed, otherwise ``None``.
+    Latin-1 is deliberately preferred: some Monaco SCP versions reject
+    ``ISO_IR 192`` even when the text is pure ASCII.
+    """
+    texts = list(_iter_text_values(ds))
+    latin1_ok = True
+    for text in texts:
+        try:
+            text.encode("latin_1")
+        except UnicodeEncodeError:
+            latin1_ok = False
+            break
+
+    old = getattr(ds, "SpecificCharacterSet", None)
+    old_name = (
+        str(old[0]) if isinstance(old, (list, tuple)) and old else str(old or "")
+    )
+    new_name = "ISO_IR 100" if latin1_ok else "ISO_IR 192"
+    ds.SpecificCharacterSet = new_name
+    return old_name if old_name and old_name != new_name else None
+
+
+def _has_value(ds: pydicom.Dataset, keyword: str) -> bool:
+    value = ds.get(keyword)
+    return value not in (None, "")
+
+
+def _set_default(
+    ds: pydicom.Dataset,
+    keyword: str,
+    value: Any,
+    changes: list[str],
+) -> None:
+    if not _has_value(ds, keyword):
+        setattr(ds, keyword, value)
+        changes.append(keyword)
+
+
+def _harmonize(
+    ds: pydicom.Dataset,
+    modality: str,
+    *,
+    anonymize: bool = False,
+    zero_couch_angles: bool = False,
+    changes: list[str] | None = None,
+) -> list[str]:
+    """Make a single-frame data set friendlier for Eclipse / Monaco.
+
+    This is deliberately conservative: it fills *missing* Type 1/2
+    attributes and fixes the character-set declaration.  Geometry and pixel
+    data are never changed, except for the explicit ``zero_couch_angles``
+    opt-in.
+    """
+    changes = changes if changes is not None else []
+
+    old_charset = _normalize_charset(ds)
+    if old_charset:
+        changes.append(
+            "SpecificCharacterSet %s->%s"
+            % (old_charset, ds.SpecificCharacterSet)
+        )
+
+    _set_default(ds, "ImageType", ["ORIGINAL", "PRIMARY"], changes)
+    _set_default(ds, "Manufacturer", "UNKNOWN", changes)
+    if not anonymize:
+        _set_default(ds, "AccessionNumber", "000000", changes)
+        _set_default(ds, "StudyID", "1", changes)
+        _set_default(ds, "ReferringPhysicianName", "UNKNOWN", changes)
+        _set_default(ds, "PatientName", "UNKNOWN", changes)
+        _set_default(ds, "PatientID", "UNKNOWN", changes)
+        _set_default(ds, "PatientBirthDate", "", changes)
+        _set_default(ds, "PatientSex", "O", changes)
+
+    if modality == "MR":
+        _set_default(ds, "MRAcquisitionType", "2D", changes)
+        _set_default(ds, "ScanningSequence", "SE", changes)
+        _set_default(ds, "SequenceVariant", "NONE", changes)
+        _set_default(ds, "ScanOptions", "NONE", changes)
+        _set_default(ds, "EchoTime", 0.0, changes)
+        _set_default(ds, "RepetitionTime", 0.0, changes)
+        _set_default(ds, "MagneticFieldStrength", 0.0, changes)
+        _set_default(ds, "AcquisitionNumber", 1, changes)
+    elif modality == "CT" and zero_couch_angles:
+        for keyword in (
+            "PatientSupportAngle",
+            "TableTopPitchAngle",
+            "TableTopRollAngle",
+        ):
+            if _has_value(ds, keyword) and float(ds.get(keyword) or 0) != 0.0:
+                setattr(ds, keyword, 0.0)
+                changes.append(keyword + "->0")
+
+    return changes
 
 
 def _pixel_bytes(
@@ -582,6 +732,7 @@ def _pixel_bytes(
     source_bits_allocated: int | None = None,
     source_bits_stored: int | None = None,
     source_high_bit: int | None = None,
+    force_16bit: bool = False,
 ) -> tuple[bytes, int, int, int, int]:
     """Return little-endian pixel data plus bit depth and pixel representation."""
     if frame.ndim != 2:
@@ -615,6 +766,10 @@ def _pixel_bytes(
         high_bit = bits_stored - 1
 
     signed = frame.dtype.kind == "i"
+    if force_16bit and bits_allocated < 16:
+        bits_allocated = 16
+        bits_stored = 16
+        high_bit = 15
     kind = "i" if signed else "u"
     dtype = np.dtype("<%s%d" % (kind, bits_allocated // 8))
     payload = np.ascontiguousarray(frame, dtype=dtype)
@@ -632,11 +787,13 @@ def _write_frame(
     series_uid: str,
     series_number: int,
     instance_number: int,
+    sop_class: str,
 ) -> pydicom.Dataset:
-    ds = copy.deepcopy(base)
+    ds = _copy_dataset(base, copy_file_meta=False)
 
-    ds.SOPClassUID = MR_IMAGE_STORAGE
-    ds.file_meta.MediaStorageSOPClassUID = MR_IMAGE_STORAGE
+    ds.SOPClassUID = sop_class
+    ds.file_meta = pydicom.dataset.FileMetaDataset()
+    ds.file_meta.MediaStorageSOPClassUID = sop_class
     # The series UID already contains the study UID, so a new study never
     # produces SOP Instance UIDs that Eclipse has seen before.
     ds.SOPInstanceUID = generate_uid(
@@ -747,6 +904,22 @@ def _read_pixels(path: str):
         return ds, pixels, True
 
 
+def _target_sop_class(sop_class: str, modality: str) -> tuple[str, str]:
+    """Return ``(single-frame SOP Class, modality)`` for the source image."""
+    if sop_class in (ENHANCED_MR_STORAGE, ENHANCED_MR_COLOR_STORAGE, MR_IMAGE_STORAGE):
+        return MR_IMAGE_STORAGE, "MR"
+    if sop_class in (ENHANCED_CT_STORAGE, CT_IMAGE_STORAGE):
+        return CT_IMAGE_STORAGE, "CT"
+    if modality == "MR":
+        return MR_IMAGE_STORAGE, "MR"
+    if modality == "CT":
+        return CT_IMAGE_STORAGE, "CT"
+    raise ConversionError(
+        "Unsupported SOP Class %s (modality %r); only MR and CT images are "
+        "converted." % (sop_class or "missing", modality or "missing")
+    )
+
+
 def convert_file(
     path: str,
     out_dir: str | None = None,
@@ -754,6 +927,10 @@ def convert_file(
     anonymize: bool = False,
     keep_study_uid: bool = False,
     keep_private_tags: bool = False,
+    harmonize: bool = True,
+    zero_couch_angles: bool = False,
+    force_16bit: bool = False,
+    verify_on_disk: bool = False,
     overwrite: bool = True,
     progress: Callable[[int, int], None] | None = None,
 ) -> ConversionReport:
@@ -774,6 +951,18 @@ def convert_file(
         the UID of the enhanced series that was already imported.
     keep_private_tags:
         Keep vendor private tags (dropped by default).
+    harmonize:
+        Fill missing Type 1/2 attributes and normalize Specific Character Set
+        for Eclipse / Monaco.  Geometry and pixel data are not changed.
+    zero_couch_angles:
+        For CT, set PatientSupportAngle, TableTopPitchAngle and
+        TableTopRollAngle to zero. Off by default because this changes
+        geometry and must be a conscious TPS-specific decision.
+    force_16bit:
+        Store 8-bit grayscale pixels as 16-bit. Off by default.
+    verify_on_disk:
+        Re-read every written file after conversion.  This is the slow,
+        maximally paranoid mode; the fast in-memory check is always enabled.
     overwrite:
         Allow overwriting existing files with the same name.
     progress:
@@ -800,7 +989,16 @@ def convert_file(
         ) from exc
 
     sop_class = str(ds.get("SOPClassUID", ""))
-    if sop_class not in (ENHANCED_MR_STORAGE, ENHANCED_MR_COLOR_STORAGE, "", MR_IMAGE_STORAGE):
+    source_modality = str(ds.get("Modality", "") or "").upper()
+    target_sop_class, modality = _target_sop_class(sop_class, source_modality)
+    if sop_class not in (
+        ENHANCED_MR_STORAGE,
+        ENHANCED_MR_COLOR_STORAGE,
+        MR_IMAGE_STORAGE,
+        ENHANCED_CT_STORAGE,
+        CT_IMAGE_STORAGE,
+        "",
+    ):
         log.warning(
             "%s: unexpected SOP Class %s (%s); attempting conversion anyway",
             os.path.basename(path),
@@ -835,6 +1033,7 @@ def convert_file(
         base.remove_private_tags()
     base.Rows = int(pixel_array.shape[1])
     base.Columns = int(pixel_array.shape[2])
+    base.Modality = modality
 
     source_study_uid = str(ds.get("StudyInstanceUID", ""))
     source_series_uid = str(ds.get("SeriesInstanceUID", ""))
@@ -872,6 +1071,20 @@ def convert_file(
         study_uid = source_study_uid
 
     base.StudyInstanceUID = study_uid
+
+    harmony_changes: list[str] = []
+    if harmonize:
+        _harmonize(
+            base,
+            modality,
+            anonymize=anonymize,
+            zero_couch_angles=zero_couch_angles,
+            changes=harmony_changes,
+        )
+        if harmony_changes:
+            warnings.append(
+                "TPS harmonization: " + ", ".join(harmony_changes)
+            )
 
     groups = _group_frames(frames)
     if not groups:
@@ -917,6 +1130,7 @@ def convert_file(
             description=description,
             frame_count=len(group.frames),
         )
+        positions: set[tuple[float, ...]] = set()
 
         for instance_number, frame in enumerate(group.frames, start=1):
             (
@@ -930,6 +1144,7 @@ def convert_file(
                 source_bits_allocated,
                 source_bits_stored,
                 source_high_bit,
+                force_16bit=force_16bit,
             )
             out_ds = _write_frame(
                 base=base,
@@ -942,11 +1157,26 @@ def convert_file(
                 series_uid=series_uid,
                 series_number=series_number,
                 instance_number=instance_number,
+                sop_class=target_sop_class,
             )
             out_ds.SeriesDescription = description
 
             filename = "IM_%03d_%04d.dcm" % (series_number, instance_number)
             output_path = os.path.join(out_dir, filename)
+            expected = (
+                int(out_ds.Rows)
+                * int(out_ds.Columns)
+                * (int(out_ds.BitsAllocated) // 8)
+            )
+            if len(out_ds.PixelData) != expected:
+                raise ConversionError(
+                    "%s: PixelData is %d bytes, expected %d"
+                    % (output_path, len(out_ds.PixelData), expected)
+                )
+            if "ImagePositionPatient" in out_ds:
+                positions.add(
+                    tuple(float(v) for v in out_ds.ImagePositionPatient)
+                )
             if not overwrite and os.path.exists(output_path):
                 raise ConversionError("Refusing to overwrite %s" % output_path)
             _save(out_ds, output_path)
@@ -962,8 +1192,15 @@ def convert_file(
             description,
             series_info.frame_count,
         )
+        if len(positions) > 1 and len(positions) != series_info.frame_count:
+            report.warnings.append(
+                "Series %d contains duplicate slice positions; check the source "
+                "series for multiple echoes or temporal positions."
+                % series_info.series_number
+            )
 
-    _verify_outputs(report)
+    if verify_on_disk:
+        _verify_outputs(report)
     return report
 
 

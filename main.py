@@ -10,7 +10,7 @@
    See the License for the specific language governing permissions and
    limitations under the License.
 
-Unpack a compressed / enhanced multi-frame MRI series into single-frame
+Unpack a compressed / enhanced multi-frame MR or CT series into single-frame
 DICOM slices that Eclipse / Aria can import.
 
 Run without arguments to open the window, or from a terminal:
@@ -62,7 +62,7 @@ def run_cli(argv: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="uncompress-mri",
         description=(
-            "Convert an enhanced (multi-frame) DICOM MRI series into "
+            "Convert an enhanced (multi-frame) DICOM MR/CT series into "
             "single-frame slices for Eclipse / Aria."
         ),
     )
@@ -87,6 +87,28 @@ def run_cli(argv: Sequence[str]) -> int:
         "--keep-private",
         action="store_true",
         help="keep vendor private tags in the output",
+    )
+    parser.add_argument(
+        "--no-harmonize",
+        dest="harmonize",
+        action="store_false",
+        help="do not fill missing TPS tags or normalize SpecificCharacterSet",
+    )
+    parser.add_argument(
+        "--zero-couch-angles",
+        action="store_true",
+        help="for CT, force PatientSupportAngle and table angles to zero",
+    )
+    parser.add_argument(
+        "--force-16bit",
+        action="store_true",
+        help="store 8-bit grayscale pixels as 16-bit",
+    )
+    parser.add_argument(
+        "--verify",
+        dest="verify_on_disk",
+        action="store_true",
+        help="re-read every written file after conversion (slower)",
     )
     parser.add_argument(
         "--no-overwrite",
@@ -116,6 +138,10 @@ def run_cli(argv: Sequence[str]) -> int:
                 anonymize=args.anon,
                 keep_study_uid=args.keep_study_uid,
                 keep_private_tags=args.keep_private,
+                harmonize=args.harmonize,
+                zero_couch_angles=args.zero_couch_angles,
+                force_16bit=args.force_16bit,
+                verify_on_disk=args.verify_on_disk,
                 overwrite=not args.no_overwrite,
             )
             if not args.quiet:
@@ -282,6 +308,7 @@ class UncompressApp:
         self.output_var = tk.StringVar()
         self.anon_var = tk.BooleanVar(value=False)
         self.private_var = tk.BooleanVar(value=False)
+        self.harmonize_var = tk.BooleanVar(value=True)
         self.progress_var = tk.DoubleVar(value=0.0)
         self.progress_text = tk.StringVar(value="")
         self.status_var = tk.StringVar(value="")
@@ -348,6 +375,10 @@ class UncompressApp:
             options, text="", variable=self.private_var
         )
         self.private_check.pack(anchor="w")
+        self.harmonize_check = ttk.Checkbutton(
+            options, text="", variable=self.harmonize_var
+        )
+        self.harmonize_check.pack(anchor="w")
 
         actions = ttk.Frame(outer)
         actions.grid(row=4, column=0, sticky="ew", pady=(14, 0))
@@ -475,6 +506,7 @@ class UncompressApp:
         self.output_hint.configure(text=self.t("output_hint"))
         self.anon_check.configure(text=self.t("anon"))
         self.private_check.configure(text=self.t("keep_private"))
+        self.harmonize_check.configure(text=self.t("harmonize"))
         self.run_button.configure(text=self.t("unpack"))
         self.open_button.configure(text=self.t("open_folder"))
         self.log_frame.configure(text=self.t("log"))
@@ -676,6 +708,7 @@ class UncompressApp:
         # touched from the worker thread that does the conversion.
         anonymize = self.anon_var.get()
         keep_private = self.private_var.get()
+        harmonize = self.harmonize_var.get()
 
         self.clear_log()
         self.clear_preview()
@@ -697,6 +730,7 @@ class UncompressApp:
                     target,
                     anonymize=anonymize,
                     keep_private_tags=keep_private,
+                    harmonize=harmonize,
                     progress=on_progress,
                 )
                 self.messages.put(("ok", report))

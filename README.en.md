@@ -1,8 +1,8 @@
 # uncompressMRI
 
-**Splits an enhanced (multi-frame) MRI series into ordinary slice-by-slice DICOM
-files that Eclipse / Aria, Monaco and other treatment planning systems can
-import.**
+**Splits an enhanced (multi-frame) MR or CT series into ordinary slice-by-slice
+DICOM files that Eclipse / Aria, Monaco and other treatment planning systems
+can import.**
 
 [![Release](https://img.shields.io/github/v/release/loonies321/uncompressMRI?style=flat-square)](https://github.com/loonies321/uncompressMRI/releases/latest)
 [![Tests](https://github.com/loonies321/uncompressMRI/actions/workflows/ci.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/ci.yml)
@@ -26,10 +26,11 @@ Or [run it from source](#from-source).
 ## Why this exists
 
 A scanner (Philips, for example) can write the whole series into one file —
-`Enhanced MR Image Storage`, with dozens of frames inside. Eclipse and Aria do
-not accept such files: they expect a set of plain `MR Image Storage` files, one
-per slice. Monaco (Elekta) and other TPS import the result the same way — it is
-standard MR Image Storage.
+`Enhanced MR Image Storage` or `Enhanced CT Image Storage`, with dozens of
+frames inside. Eclipse and Aria do not accept such files: they expect a set of
+plain `MR Image Storage` / `CT Image Storage` files, one per slice. Monaco
+(Elekta) and other TPS import the result the same way — these are standard
+single-frame objects.
 
 uncompressMRI splits the multi-frame file back into slices and keeps the
 geometry of **each** frame instead of an average:
@@ -94,6 +95,9 @@ collide. If you really want to append to the original study, use
 | `Rows`, `Columns`, `BitsStored` | from the source; 12 bits in 16 stay 12 bits |
 | Vendor private tags | removed; keep them with `--keep-private` |
 | `PatientName`, `PatientID` | from the source, or anonymized with `--anon` |
+| `SpecificCharacterSet` | normalized: Latin-1 for ASCII, UTF-8 for Cyrillic |
+| Missing Type 1/2 tags | filled with safe defaults (`--no-harmonize` disables) |
+| CT table angles | **not** zeroed by default; use `--zero-couch-angles` |
 
 ## Import into Eclipse / Aria
 
@@ -111,6 +115,9 @@ python main.py IMG-0001-00001.dcm -o /data/slices
 python main.py IMG-0001-00001.dcm --anon          # anonymize
 python main.py IMG-0001-00001.dcm --keep-study-uid  # reuse the source Study UID
 python main.py ./dicoms/*.dcm -o /data/out        # several files
+python main.py ct_enhanced.dcm --zero-couch-angles # CT: zero table angles
+python main.py file.dcm --no-harmonize            # leave missing tags alone
+python main.py file.dcm --verify                  # re-read every output file
 ```
 
 | Option | Meaning |
@@ -119,6 +126,10 @@ python main.py ./dicoms/*.dcm -o /data/out        # several files
 | `--anon` | drop patient name/ID (the Study UID is new anyway) |
 | `--keep-study-uid` | reuse the source `StudyInstanceUID` |
 | `--keep-private` | keep vendor private tags |
+| `--no-harmonize` | do not fill missing TPS tags or change charset |
+| `--zero-couch-angles` | for CT, zero `PatientSupportAngle` and table angles |
+| `--force-16bit` | store 8-bit grayscale pixels as 16-bit |
+| `--verify` | re-read every output file after writing (slower, strictest) |
 | `--no-overwrite` | do not overwrite existing files |
 | `-q` | quiet mode |
 | `--version` | version |
@@ -143,13 +154,14 @@ flowchart LR
    `Per-Frame Functional Groups`. If a per-frame value is missing, the
    `Shared Functional Groups` are used, then the top-level tags.
 3. Frames are grouped into series by `StackID`, orientation, `FrameType`,
-   echo number, b-value and `Dimension Index` values (except the position
-   within the stack).
-4. Each slice is written as a plain `MR Image Storage` (explicit VR little
-   endian) with a recomputed `SliceLocation` (`IPP · normal`) and its own
-   `InstanceNumber`.
-5. The result is validated: `PixelData` length equals `Rows × Columns × 2`,
-   slice positions are unique.
+   echo number, b-value and only the allowed contrast/physics `Dimension Index`
+   values. Spatial and time indices do not split one volume.
+4. Each slice is written as a plain `MR Image Storage` or `CT Image Storage`
+   (explicit VR little endian) with a recomputed `SliceLocation`
+   (`IPP · normal`) and its own `InstanceNumber`.
+5. The result is validated in memory: `PixelData` length equals
+   `Rows × Columns × 2` and slice positions are unique. `--verify`
+   additionally re-reads every file.
 6. If a file is truncated (Siemens sometimes omits the trailing pixel-data
    delimiter), the read is retried with the delimiter restored — a warning is
    logged and the conversion does not fail.
@@ -171,18 +183,31 @@ flowchart LR
 
 </details>
 
+
+## Speed
+
+2.4.0 removes deep copies of large Enhanced datasets, moves validation into
+memory (no re-read of every output file), and stops spatial Dimension Index
+values from splitting one volume into many series.
+
+On a synthetic 800-frame 256×256 file the internal test takes about **2.5 s**
+(≈320 frames/s) versus ≈3.6 s in 2.3.1 on the same machine — roughly 30%
+faster. Most of the remaining time is writing 800 separate DICOM files; use
+`--verify` if you also want them re-read after writing.
+
 ## Tests and build
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest tests -q      # 28 tests
+python -m pytest tests -q      # 37 tests
 ```
 
-The tests build a synthetic enhanced file (Philips-like layout, 2 stacks,
-12-bit pixels) and check series splitting, bit-exact pixels, geometry, UIDs,
-anonymization, progress reporting, repair of a truncated file, preview
-rendering and the absence of hard-coded patient data. A separate test runs the
-real sample `IMG-0001-00001.dcm`.
+The tests build synthetic enhanced MR and CT files (Philips-like layout,
+2 stacks, 12-bit pixels) and check series splitting, bit-exact pixels,
+geometry, UIDs, anonymization, harmonization, charset handling, CT output,
+protection against spatial Dimension Index over-splitting, progress reporting,
+repair of a truncated file, preview rendering and the absence of hard-coded
+patient data. A separate test runs the real sample `IMG-0001-00001.dcm`.
 
 The Windows build is automatic: a `v*` tag triggers GitHub Actions, which runs
 the tests, builds the exe with PyInstaller, **runs the built binary on a real
@@ -203,7 +228,7 @@ python main.py                     # GUI
 python main.py file.dcm -o out     # CLI
 ```
 
-Python 3.10+ is required (tested on 3.11).
+Python 3.10+ is required (tested on 3.10 and 3.12).
 
 ### Build the exe locally (Windows)
 
@@ -218,6 +243,11 @@ only builds for the OS it runs on.
 ## Limitations
 
 * Color enhanced MR (`Enhanced MR Color Image Storage`) is not supported.
+* CT table angles are preserved from the source by default. If a TPS requires
+  zero angles, enable `--zero-couch-angles` deliberately: it changes geometry.
+* Harmonization fills **missing** tags only. `UNKNOWN`, `000000` and `0.0` are
+  safe placeholders, not guesses about the patient; review the result before
+  clinical use.
 * Compressed JPEG/JPEG-2000 files need `pylibjpeg` or `python-gdcm`.
 * If the position is missing from per-frame, shared and top-level tags, slices
   are reconstructed from the slice thickness — the program warns, and the
@@ -259,6 +289,7 @@ Issues, ideas and pull requests are welcome.
 - [CONTRIBUTING.md](CONTRIBUTING.md) — how to run tests and what constraints to keep.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community rules.
 - [SECURITY.md](SECURITY.md) — how to report a vulnerability.
+- [CHANGELOG.md](CHANGELOG.md) — what changed between versions.
 - Issue templates: [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) and [feature request](.github/ISSUE_TEMPLATE/feature_request.yml).
 
 **Important:** public issues are welcome, including criticism. But never attach real patient DICOM data: the person who publishes medical or personal data is responsible for it. Use synthetic files or anonymize them (`--anon`) and review before posting.

@@ -1,6 +1,6 @@
 # uncompressMRI
 
-**Режет «сжатую» multi-frame МРТ-серию на обычные посрезовые DICOM-файлы,
+**Режет «сжатую» multi-frame МРТ/КТ-серию на обычные посрезовые DICOM-файлы,
 которые импортируются в Eclipse / Aria, Monaco и другие TPS.**
 
 **Русский** · 🇬🇧 [English version](README.en.md)
@@ -25,10 +25,11 @@ Windows x64, ~25 МБ, Python не нужен.
 ## Зачем это
 
 Аппарат (например, Philips) может записать всю серию одним файлом —
-`Enhanced MR Image Storage`, внутри которого лежат десятки кадров.
-Eclipse и Aria такие файлы не принимают: им нужен набор обычных
-`MR Image Storage`, по файлу на срез. Monaco (Elekta) и другие TPS
-импортируют результат так же — это стандартный MR Image Storage.
+`Enhanced MR Image Storage` или `Enhanced CT Image Storage`, внутри которого
+лежат десятки кадров. Eclipse и Aria такие файлы не принимают: им нужен набор
+обычных `MR Image Storage` / `CT Image Storage`, по файлу на срез. Monaco
+(Elekta) и другие TPS импортируют результат так же — это стандартные
+single-frame объекты.
 
 uncompressMRI разбирает multi-frame файл обратно на срезы, сохраняя
 геометрию каждого кадра, а не «среднюю по больнице»:
@@ -93,6 +94,9 @@ IMG-0001-00001_slices/
 | `Rows`, `Columns`, `BitsStored` | из источника, 12 бит в 16 остаются 12 битами |
 | Приватные теги вендора | удаляются, можно оставить флагом `--keep-private` |
 | `PatientName`, `PatientID` | из источника, либо обезличиваются флагом `--anon` |
+| `SpecificCharacterSet` | нормализуется: Latin-1 для ASCII, UTF-8 для кириллицы |
+| Отсутствующие Type 1/2 теги | заполняются безопасными значениями (`--no-harmonize` отключает) |
+| КТ-углы стола | по умолчанию **не** обнуляются; включается `--zero-couch-angles` |
 
 ## Импорт в Eclipse / Aria
 
@@ -110,6 +114,9 @@ python main.py IMG-0001-00001.dcm -o /data/slices
 python main.py IMG-0001-00001.dcm --anon          # обезличить
 python main.py IMG-0001-00001.dcm --keep-study-uid  # оставить старый Study UID
 python main.py ./dicoms/*.dcm -o /data/out        # несколько файлов
+python main.py ct_enhanced.dcm --zero-couch-angles # КТ: обнулить углы стола
+python main.py file.dcm --no-harmonize            # не трогать отсутствующие теги
+python main.py file.dcm --verify                  # перечитать все файлы после записи
 ```
 
 | Ключ | Что делает |
@@ -118,6 +125,10 @@ python main.py ./dicoms/*.dcm -o /data/out        # несколько файл�
 | `--anon` | убрать ФИО/ID (Study UID и так новый) |
 | `--keep-study-uid` | оставить исходный `StudyInstanceUID` |
 | `--keep-private` | оставить приватные теги вендора |
+| `--no-harmonize` | не заполнять отсутствующие TPS-теги и не менять charset |
+| `--zero-couch-angles` | для КТ обнулить `PatientSupportAngle` и углы стола |
+| `--force-16bit` | сохранить 8-битные пиксели как 16-битные |
+| `--verify` | после записи перечитать все файлы (медленнее, максимально строго) |
 | `--no-overwrite` | не перезаписывать существующие файлы |
 | `-q` | тихий режим |
 | `--version` | версия |
@@ -126,7 +137,7 @@ python main.py ./dicoms/*.dcm -o /data/out        # несколько файл�
 
 ```mermaid
 flowchart LR
-    A["Enhanced MR<br/>1 файл, N кадров"] --> B["Разбор кадров<br/>позиция · ориентация<br/>толщина · окно"]
+    A["Enhanced MR/CT<br/>1 файл, N кадров"] --> B["Разбор кадров<br/>позиция · ориентация<br/>толщина · окно"]
     B --> C{"Группировка<br/>стек · эхо<br/>b-value · время"}
     C --> D["Серия 101<br/>срезы 1…k"]
     C --> E["Серия 102<br/>срезы 1…m"]
@@ -142,11 +153,13 @@ flowchart LR
    Если per-frame данных нет — берутся `Shared Functional Groups`, затем
    значения верхнего уровня.
 3. Кадры группируются в серии по `StackID`, ориентации, `FrameType`,
-   номеру эха, b-value и значениям `Dimension Index` (кроме позиции в стеке).
-4. Каждый срез пишется как обычный `MR Image Storage` (explicit VR little endian)
+   номеру эха, b-value и только разрешённым контрастным/физическим
+   значениям `Dimension Index`. Пространственные и временные индексы не дробят объём.
+4. Каждый срез пишется как обычный `MR Image Storage` или `CT Image Storage`
+   (explicit VR little endian)
    с пересчитанным `SliceLocation` (`IPP · normal`) и своим `InstanceNumber`.
-5. Результат проверяется: длина `PixelData` = `Rows × Columns × 2`,
-   позиции срезов уникальны.
+5. Результат проверяется в памяти: длина `PixelData` = `Rows × Columns × 2`,
+   позиции срезов уникальны. Флаг `--verify` дополнительно перечитывает файлы.
 6. Если файл обрезан (Siemens иногда не дописывает концевой разделитель
    pixel data), чтение повторяется с восстановленным разделителем —
    в журнале появляется предупреждение, конвертация не падает.
@@ -168,19 +181,32 @@ flowchart LR
 
 </details>
 
+
+## Скорость
+
+В 2.4.0 убраны глубокие копии больших enhanced-датасетов, проверка
+результата перенесена в память (без повторного чтения каждого файла), а
+группировка больше не раздувает объём из-за пространственных Dimension Index.
+
+На синтетическом файле из 800 кадров 256×256 внутренний тест занимает около
+**2,5 с** (≈320 кадров/с) против ≈3,6 с в 2.3.1 на той же машине — примерно на
+30% быстрее. Основное оставшееся время — запись 800 отдельных DICOM-файлов;
+если нужна максимальная строгость, `--verify` перечитывает их после записи.
+
 ## Тесты и сборка
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest tests -q      # 28 тестов
+python -m pytest tests -q      # 37 тестов
 ```
 
 Тесты строят синтетический enhanced-файл (Philips-подобная структура,
 2 стека, 12-битные пиксели) и проверяют разбиение на серии, побитовое
-совпадение пикселей, геометрию, UID, обезличивание, прогресс, починку
-обрезанного файла, отрисовку предпросмотра и отсутствие захардкоженных
-данных пациента. Отдельный тест прогоняет реальный пример
-`IMG-0001-00001.dcm`.
+совпадение пикселей, геометрию, UID, обезличивание, harmonization,
+charset, КТ-вывод, защиту от дробления объёма пространственными Dimension
+Index, прогресс, починку обрезанного файла, отрисовку предпросмотра и
+отсутствие захардкоженных данных пациента. Отдельный тест прогоняет реальный
+пример `IMG-0001-00001.dcm`.
 
 Windows-сборка автоматическая: тег `v*` поднимает GitHub Actions, который
 прогоняет тесты, собирает exe через PyInstaller, **запускает уже собранный
@@ -201,7 +227,7 @@ python main.py                     # окно
 python main.py file.dcm -o out     # консоль
 ```
 
-Нужен Python 3.10+ (проверено на 3.11).
+Нужен Python 3.10+ (проверено на 3.10 и 3.12).
 
 ### Собрать exe локально (Windows)
 
@@ -216,6 +242,11 @@ build_exe.bat
 ## Ограничения
 
 * Цветные enhanced-MR (`Enhanced MR Color Image Storage`) не поддерживаются.
+* КТ-углы стола по умолчанию сохраняются как в источнике. Если TPS требует
+  нулевые углы, включайте `--zero-couch-angles` осознанно: это меняет геометрию.
+* Harmonization заполняет только **отсутствующие** теги. Значения `UNKNOWN`,
+  `000000`, `0.0` — безопасные заглушки, а не догадки о пациенте;
+  перед клиническим использованием результат нужно проверить.
 * Сжатые JPEG/JPEG-2000 файлы требуют `pylibjpeg` или `python-gdcm`.
 * Если позиции нет ни в per-frame, ни в shared, ни в top-level тегах,
   срезы восстанавливаются по толщине — программа предупредит, результат
@@ -244,7 +275,13 @@ build_exe.bat
 поставьте `pylibjpeg` (из исходников) или пришлите файл, добавлю поддержку.
 
 **Из одного файла вышло несколько серий.** Так и должно быть: в исходнике
-несколько стеков (например, локалайзеры в трёх плоскостях).
+несколько стеков (например, локалайзеры в трёх плоскостях). Пространственные
+Dimension Index (позиция среза, Instance Number, время кадра) больше не дробят
+один объём на отдельные серии.
+
+**В логе появилось `TPS harmonization`.** Это список заполненных отсутствующих
+тегов и/или исправленный `SpecificCharacterSet`. Если менять ничего не нужно,
+используйте `--no-harmonize`.
 
 **В результате не то ФИО.** Оно берётся из исходного файла, ничего не
 подставляется. Для обезличивания — `--anon` или галочка в окне.
@@ -256,6 +293,7 @@ build_exe.bat
 - [CONTRIBUTING.md](CONTRIBUTING.md) — как запустить тесты, что можно менять и каких ограничений держаться.
 - [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — правила общения.
 - [SECURITY.md](SECURITY.md) — как сообщить об уязвимости.
+- [CHANGELOG.md](CHANGELOG.md) — что изменилось между версиями.
 - Шаблоны issue: [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) и [feature request](.github/ISSUE_TEMPLATE/feature_request.yml).
 
 **Важно:** публичные issue приветствуются, включая критику. Но не прикладывайте реальные DICOM-данные пациентов: ответственность за медицинские и персональные данные в публикации лежит на авторе. Для примеров используйте синтетические файлы или обезличьте их (`--anon`) и проверьте перед публикацией.
@@ -275,17 +313,20 @@ Apache License 2.0 — см. [LICENCE.txt](LICENCE.txt).
 
 Full English README: **[README.en.md](README.en.md)**.
 
-`uncompressMRI` converts **enhanced (multi-frame) MRI DICOM** (Philips
-`Enhanced MR Image Storage`) into plain **single-frame `MR Image Storage`**
-slices that Varian **Eclipse** / **Aria** and other treatment planning
-systems (Oncentra, Monaco, RayStation) can import.
+`uncompressMRI` converts **enhanced (multi-frame) MR and CT DICOM**
+(Philips `Enhanced MR Image Storage`, `Enhanced CT Image Storage`) into plain
+**single-frame `MR Image Storage` / `CT Image Storage`** slices that Varian
+**Eclipse** / **Aria** and other treatment planning systems (Oncentra, Monaco,
+RayStation) can import.
 
 It is a DICOM splitter/converter for radiotherapy: per-frame geometry
 (position, orientation, spacing, thickness), series splitting by
-stack/echo/b-value, deterministic UIDs (a new `StudyInstanceUID`, so Eclipse
-does not treat the result as an already-imported study),
-anonymization, Windows `.exe`, CLI and GUI.
+stack/echo/b-value, a conservative TPS harmonization mode (charset, missing
+Type 1/2 tags), deterministic UIDs (a new `StudyInstanceUID`, so Eclipse
+does not treat the result as an already-imported study), anonymization,
+optional CT table-angle zeroing, Windows `.exe`, CLI and GUI.
 
-<sub>dicom · dicom converter · dicom splitter · enhanced MR · multi-frame ·
-MRI · radiotherapy · radiation oncology · medical physics · treatment planning
-system · Varian Eclipse · Varian Aria · Philips · pydicom · Python</sub>
+<sub>dicom · dicom converter · dicom splitter · enhanced MR · enhanced CT ·
+multi-frame · MRI · CT · radiotherapy · radiation oncology · medical physics ·
+treatment planning system · Varian Eclipse · Varian Aria · Philips · pydicom ·
+Python</sub>

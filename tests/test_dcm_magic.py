@@ -152,6 +152,8 @@ def test_anonymize(tmp_path, enhanced_file):
         assert str(ds.PatientName) == "ANONYMOUS"
         assert str(ds.PatientID) == "ANONYMOUS"
         assert str(ds.InstitutionName) == ""
+        assert str(ds.PatientSex) == ""
+        assert str(ds.AccessionNumber) == ""
         assert str(ds.StudyInstanceUID) != STUDY_UID
 
 
@@ -288,3 +290,175 @@ def test_sop_uids_are_unique_across_studies(tmp_path, enhanced_file):
     default_sops = {str(ds.SOPInstanceUID) for ds in _read_all(str(default_out))}
     keep_sops = {str(ds.SOPInstanceUID) for ds in _read_all(str(keep_out))}
     assert not default_sops & keep_sops
+
+
+def test_enhanced_ct_is_written_as_ct_image_storage(tmp_path, enhanced_ct_file):
+    out = tmp_path / "out"
+    report = convert_file(enhanced_ct_file["path"], str(out))
+
+    assert report.frame_count == 5
+    assert len(report.series) == 2
+    for ds in _read_all(str(out)):
+        assert ds.SOPClassUID == dcm_magic.CT_IMAGE_STORAGE
+        assert ds.Modality == "CT"
+        assert "NumberOfFrames" not in ds
+        assert (0x5200, 0x9230) not in ds
+        assert (0x5200, 0x9229) not in ds
+
+
+def test_ct_couch_angles_are_optional(tmp_path, enhanced_ct_file):
+    source = pydicom.dcmread(enhanced_ct_file["path"])
+    source.PatientSupportAngle = 15.0
+    source.TableTopPitchAngle = 2.0
+    source.TableTopRollAngle = -1.0
+    source.save_as(enhanced_ct_file["path"], enforce_file_format=True)
+
+    default_out = tmp_path / "default"
+    convert_file(enhanced_ct_file["path"], str(default_out))
+    default_ds = _read_all(str(default_out))[0]
+    assert float(default_ds.PatientSupportAngle) == pytest.approx(15.0)
+    assert float(default_ds.TableTopPitchAngle) == pytest.approx(2.0)
+
+    zero_out = tmp_path / "zero"
+    report = convert_file(
+        enhanced_ct_file["path"], str(zero_out), zero_couch_angles=True
+    )
+    zero_ds = _read_all(str(zero_out))[0]
+    assert float(zero_ds.PatientSupportAngle) == 0.0
+    assert float(zero_ds.TableTopPitchAngle) == 0.0
+    assert float(zero_ds.TableTopRollAngle) == 0.0
+    assert any("TPS harmonization" in warning for warning in report.warnings)
+
+
+def test_harmonize_fills_missing_tps_tags(tmp_path, enhanced_file):
+    source = pydicom.dcmread(enhanced_file["path"])
+    for keyword in (
+        "AccessionNumber",
+        "StudyID",
+        "ReferringPhysicianName",
+        "ImageType",
+        "MRAcquisitionType",
+        "EchoTime",
+    ):
+        if keyword in source:
+            del source[keyword]
+    source.save_as(enhanced_file["path"], enforce_file_format=True)
+
+    out = tmp_path / "out"
+    report = convert_file(enhanced_file["path"], str(out))
+    ds = _read_all(str(out))[0]
+
+    assert str(ds.AccessionNumber) == "000000"
+    assert str(ds.StudyID) == "1"
+    assert str(ds.ReferringPhysicianName) == "UNKNOWN"
+    assert list(ds.ImageType)[:2] == ["ORIGINAL", "PRIMARY"]
+    assert str(ds.MRAcquisitionType) == "2D"
+    assert any("TPS harmonization" in warning for warning in report.warnings)
+
+
+def test_harmonize_can_be_disabled(tmp_path, enhanced_file):
+    source = pydicom.dcmread(enhanced_file["path"])
+    del source.AccessionNumber
+    source.save_as(enhanced_file["path"], enforce_file_format=True)
+
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out), harmonize=False)
+    ds = _read_all(str(out))[0]
+    assert "AccessionNumber" not in ds
+
+
+def test_harmonize_normalizes_ascii_utf8_to_latin1(tmp_path, enhanced_file):
+    source = pydicom.dcmread(enhanced_file["path"])
+    source.SpecificCharacterSet = "ISO_IR 192"
+    source.save_as(enhanced_file["path"], enforce_file_format=True)
+
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out))
+    ds = _read_all(str(out))[0]
+    assert ds.SpecificCharacterSet == "ISO_IR 100"
+
+
+def test_harmonize_preserves_cyrillic_as_utf8(tmp_path):
+    path = tmp_path / "cyrillic.dcm"
+    build_enhanced_file(
+        path,
+        stacks=[
+            Stack(
+                "1",
+                (1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 1.0),
+                2,
+            )
+        ],
+        patient_name="Иванов^Иван",
+        specific_character_set="ISO_IR 144",
+    )
+    source = pydicom.dcmread(path)
+    source.SeriesDescription = "Т2_аксиал"
+    source.save_as(path, enforce_file_format=True)
+
+    out = tmp_path / "out"
+    convert_file(str(path), str(out))
+    ds = _read_all(str(out))[0]
+    assert ds.SpecificCharacterSet == "ISO_IR 192"
+    assert str(ds.PatientName) == "Иванов^Иван"
+    assert str(ds.SeriesDescription) == "Т2_аксиал"
+
+
+def test_spatial_dimensions_do_not_split_one_volume(tmp_path):
+    stack = Stack(
+        "1",
+        (1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        3,
+    )
+    path = tmp_path / "spatial_dimensions.dcm"
+    build_enhanced_file(
+        path,
+        stacks=[stack],
+        dimension_pointers=(
+            (0x0020, 0x0032),  # Image Position Patient
+            (0x0020, 0x0013),  # Instance Number
+            (0x0018, 0x9074),  # Frame Acquisition DateTime
+        ),
+        dimension_values_by_frame={0: (1, 1, 1), 1: (2, 2, 2), 2: (3, 3, 3)},
+    )
+
+    report = convert_file(str(path), str(tmp_path / "out"))
+    assert len(report.series) == 1
+    assert report.frame_count == 3
+
+
+def test_contrast_dimension_still_splits_series(tmp_path):
+    stack = Stack(
+        "1",
+        (1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        (0.0, 0.0, 0.0),
+        (0.0, 0.0, 1.0),
+        3,
+    )
+    path = tmp_path / "echo_dimension.dcm"
+    build_enhanced_file(
+        path,
+        stacks=[stack],
+        dimension_pointers=((0x0018, 0x9082),),  # Effective Echo Time
+        dimension_values_by_frame={0: (10,), 1: (10,), 2: (20,)},
+    )
+
+    report = convert_file(str(path), str(tmp_path / "out"))
+    assert len(report.series) == 2
+    assert [series.frame_count for series in report.series] == [2, 1]
+
+
+def test_classic_ct_stays_ct_on_second_pass(tmp_path, enhanced_ct_file):
+    first = tmp_path / "first"
+    report = convert_file(enhanced_ct_file["path"], str(first))
+
+    second = tmp_path / "second"
+    report2 = convert_file(report.output_files[0], str(second))
+    ds = _read_all(str(second))[0]
+    assert report2.frame_count == 1
+    assert ds.SOPClassUID == dcm_magic.CT_IMAGE_STORAGE
+    assert ds.Modality == "CT"
