@@ -8,6 +8,9 @@ import.**
 [![Windows build](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml/badge.svg)](https://github.com/loonies321/uncompressMRI/actions/workflows/build-windows-exe.yml)
 [![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENCE.txt)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+[![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+[![Downloads](https://img.shields.io/github/downloads/loonies321/uncompressMRI/total?style=flat-square)](https://github.com/loonies321/uncompressMRI/releases)
 
 🇷🇺 [Русская версия](README.md) · **English**
 
@@ -247,6 +250,19 @@ several stacks (for example localizers in three planes).
 
 **The patient name is unexpected.** It is taken from the source file; nothing
 is substituted. Use `--anon` or the checkbox in the window to anonymize.
+
+## Contributing
+
+Issues, ideas and pull requests are welcome.
+
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how to run tests and what constraints to keep.
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) — community rules.
+- [SECURITY.md](SECURITY.md) — how to report a vulnerability.
+- Issue templates: [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) and [feature request](.github/ISSUE_TEMPLATE/feature_request.yml).
+
+**Important:** never attach real patient DICOM data to an issue. Use synthetic files or anonymize them (`--anon`) and review before posting.
+
+If the tool saved you time, a star helps other medical physicists find it.
 
 ## License
 

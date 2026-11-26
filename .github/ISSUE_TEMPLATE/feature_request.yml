@@ -1,0 +1,77 @@
+name: "Feature request / Идея"
+description: "Предложить улучшение или новую возможность"
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите задачу, а не только решение: так проще понять, какой сценарий нужно закрыть.
+        Помните про ограничения проекта: GUI только на стандартной библиотеке, exe около 25 МБ, без сети и телеметрии.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я поискал(а) похожие предложения в issues
+          required: true
+        - label: В описании нет данных пациентов
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Какую задачу это решает
+      description: "Например: «Eclipse не принимает серию после конвертации», «нужно быстрее находить нужный срез»."
+      placeholder: "Сейчас приходится ..., потому что ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Предлагаемое решение
+      placeholder: "Добавить ..., изменить ..., показать ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Альтернативы
+      description: "Что вы пробовали или рассматривали?"
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Область
+      options:
+        - GUI
+        - CLI
+        - DICOM / геометрия / UID
+        - Предпросмотр
+        - Документация
+        - Сборка и релизы
+        - Другое
+    validations:
+      required: true
+
+  - type: dropdown
+    id: contribute
+    attributes:
+      label: Готовы помочь с реализацией?
+      options:
+        - "Да, могу сделать PR"
+        - "Могу помочь с тестами или документацией"
+        - "Пока нет, только идея"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: coc
+    attributes:
+      label: Кодекс поведения
+      options:
+        - label: Я согласен(на) с CODE_OF_CONDUCT.md
+          required: true

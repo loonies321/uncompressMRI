@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "FAQ и решение проблем"
+    url: "https://github.com/loonies321/uncompressMRI#если-что-то-пошло-не-так"
+    about: "Сначала проверьте частые случаи: Eclipse, UID, обрезанный файл Siemens, сжатие."
+  - name: "Последний релиз"
+    url: "https://github.com/loonies321/uncompressMRI/releases/latest"
+    about: "Скачать exe, SHA-256 и заметки к версии."
+  - name: "Сообщить об уязвимости"
+    url: "https://github.com/loonies321/uncompressMRI/security/advisories/new"
+    about: "Приватно, только для мейнтейнера. Не создавайте публичный issue."

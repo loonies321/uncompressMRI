@@ -1,0 +1,108 @@
+name: "Bug report / Ошибка"
+description: "Сообщить о воспроизводимой проблеме в uncompressMRI"
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Спасибо за отчёт. Чем точнее шаги и версия, тем быстрее получится исправить.
+
+        **Не прикладывайте реальные DICOM-данные пациентов.** Для примера используйте синтетический файл или обезличьте его (`--anon`) и проверьте перед публикацией.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Перед отправкой
+      options:
+        - label: Я поискал(а) похожие issue и прочитал(а) раздел «Если что-то пошло не так» в README
+          required: true
+        - label: В отчёте нет ФИО, ID, дат, номеров исследований и других идентификаторов пациентов
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия
+      description: "Вывод `uncompressMRI.exe --version` или `python main.py --version`"
+      placeholder: "2.3.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Как запускаете
+      options:
+        - Windows .exe из Releases
+        - CLI из исходников
+        - GUI из исходников
+        - Другое
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: ОС и разрядность
+      placeholder: "Windows 11 x64 / Ubuntu 24.04 / macOS 15"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: input_type
+    attributes:
+      label: Что за файл на входе
+      options:
+        - Enhanced MR Image Storage (multi-frame)
+        - Обычный single-frame DICOM
+        - Несколько файлов
+        - Другое / не знаю
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      placeholder: |
+        1. Открыл ...
+        2. Нажал ...
+        3. Получил ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемое поведение
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактическое поведение
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Журнал или текст ошибки
+      description: "Без персональных данных. Можно приложить хвост журнала и вывод `--version`."
+      render: shell
+
+  - type: input
+    id: sample
+    attributes:
+      label: Ссылка на тестовый файл (необязательно)
+      description: "Только синтетический или обезличенный файл. Не прикладывайте данные пациентов."
+
+  - type: checkboxes
+    id: coc
+    attributes:
+      label: Кодекс поведения
+      options:
+        - label: Я согласен(на) с CODE_OF_CONDUCT.md
+          required: true
