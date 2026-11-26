@@ -27,7 +27,7 @@
 
 ## Медицинские данные — отдельное правило
 
-Проект работает с DICOM, поэтому правило строже обычного: **в issue, pull request, комментариях, discussions и любых вложениях не должно быть данных пациентов.**
+Проект работает с DICOM, поэтому правило строже обычного: **в issue, pull request, комментариях, discussions и любых вложениях не должно быть данных пациентов.** Публичные issue при этом приветствуются — включая критику проекта. Но публикация реальных данных пациента — не «смелый опенсорс», а риск для пациента. Ответственность за такую публикацию лежит на авторе; мейнтейнеры удаляют материал и могут ограничить участие.
 
 Для примеров используйте:
 
@@ -35,7 +35,7 @@
 - файлы, обезличенные самим uncompressMRI (`--anon`), и только после ручной проверки;
 - минимальный набор тегов вместо полного файла.
 
-Если для разбора нужен реальный файл, сначала свяжитесь с мейнтейнером и согласуйте безопасный канал. Публичный issue для этого не подходит.
+Если для разбора нужен реальный файл, сначала свяжитесь с мейнтейнером и согласуйте безопасный канал. Публичный issue — не место для реальных данных; если уже опубликовал, удали сообщение и напиши мейнтейнеру.
 
 ## Обязанности мейнтейнера
 
@@ -85,4 +85,4 @@
 
 ## English summary
 
-Be respectful, critique code rather than people, and never post real patient DICOM data (names, IDs, dates, study numbers, face images) in issues, pull requests or comments. Use synthetic or anonymized files only. Report sensitive violations privately via [@loonies321](https://github.com/loonies321) or a [security advisory](https://github.com/loonies321/uncompressMRI/security/advisories/new). This Code of Conduct is adapted from Contributor Covenant 2.1 (CC BY 4.0).
+Be respectful, critique code rather than people, and never post real patient DICOM data (names, IDs, dates, study numbers, face images) in issues, pull requests or comments. Public issues are welcome, but the person who publishes medical or personal data is responsible for anonymization. Use synthetic or anonymized files only. Report sensitive violations privately via [@loonies321](https://github.com/loonies321) or a [security advisory](https://github.com/loonies321/uncompressMRI/security/advisories/new). This Code of Conduct is adapted from Contributor Covenant 2.1 (CC BY 4.0).

@@ -261,7 +261,7 @@ Issues, ideas and pull requests are welcome.
 - [SECURITY.md](SECURITY.md) — how to report a vulnerability.
 - Issue templates: [bug report](.github/ISSUE_TEMPLATE/bug_report.yml) and [feature request](.github/ISSUE_TEMPLATE/feature_request.yml).
 
-**Important:** never attach real patient DICOM data to an issue. Use synthetic files or anonymize them (`--anon`) and review before posting.
+**Important:** public issues are welcome, including criticism. But never attach real patient DICOM data: the person who publishes medical or personal data is responsible for it. Use synthetic files or anonymize them (`--anon`) and review before posting.
 
 If the tool saved you time, a star helps other medical physicists find it.
 

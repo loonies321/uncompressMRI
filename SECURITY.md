@@ -7,11 +7,11 @@
 | 2.3.x (последний релиз) | да, исправления безопасности выходят патч-релизом |
 | 2.2.x и старше | нет, обновитесь до 2.3.x |
 
-## Как сообщить об уязвимости
+## Как сообщить
 
-**Не открывайте публичный issue.**
+Публичные issue приветствуются — баги, вопросы, критика и «мне не нравится» тоже. Если речь об уязвимости, которая ещё не исправлена, или о данных пациента, лучше начать с приватного канала: так мы успеем исправить или удалить материал до публичного распространения. Это рекомендация, а не запрет: если считаешь, что публичное обсуждение важнее, открывай публичный issue.
 
-Используйте приватный канал GitHub:
+Приватный канал GitHub:
 
 [Report a vulnerability](https://github.com/loonies321/uncompressMRI/security/advisories/new)
 
@@ -25,7 +25,19 @@
 - что происходит и чем это опасно;
 - минимальный синтетический или обезличенный файл, если он нужен.
 
-**Не прикладывайте реальные DICOM-данные пациентов.** Если без файла не обойтись, сначала согласуйте канал; публичный issue для этого не подходит.
+**Не прикладывайте реальные DICOM-данные пациентов.** Если без файла не обойтись, используйте синтетический или обезличенный файл и согласуйте канал. Публичный issue — можно, но только без медицинских и персональных данных.
+
+## Ответственность за медицинские и персональные данные
+
+Проект открытый, и публичные issue — нормальная часть работы. Но публикация DICOM, скриншотов, логов или фрагментов исследования — ответственность автора публикации. Автор обязан убедиться, что в материале нет ФИО, ID, дат, номеров исследований, изображений лица и других идентификаторов, либо что есть законное основание и согласие на публикацию.
+
+Мейнтейнеры:
+
+- удаляют такие материалы, как только узнают о них;
+- не могут гарантировать модерацию каждого сообщения;
+- не несут ответственности за действия участников, которые опубликовали медицинские или персональные данные без обезличивания.
+
+Если сомневаетесь — не публикуйте файл. Сделайте синтетический пример или обезличьте (`--anon`) и проверьте перед отправкой.
 
 ## Что в области действия
 
@@ -70,4 +82,4 @@
 
 ## English summary
 
-Supported: 2.3.x. Report vulnerabilities privately via [GitHub Security Advisories](https://github.com/loonies321/uncompressMRI/security/advisories/new), not a public issue. Never attach real patient DICOM data. In scope: parser crashes/DoS, path traversal, unsafe file overwrite, PHI leakage into logs/names/errors, dependency and release-integrity issues. Acknowledge within 72 hours, triage within 7 days, coordinated disclosure around 90 days.
+Supported: 2.3.x. Public issues are welcome, including criticism. For an unpatched vulnerability or patient data, a private [security advisory](https://github.com/loonies321/uncompressMRI/security/advisories/new) is preferred, not required. Never attach real patient DICOM data. The person who posts DICOM, screenshots or logs is responsible for anonymization; maintainers remove such material when notified but do not moderate every message and are not responsible for participants' publications. In scope: parser crashes/DoS, path traversal, unsafe file overwrite, PHI leakage into logs/names/errors, dependency and release-integrity issues. Acknowledge within 72 hours, triage within 7 days, coordinated disclosure around 90 days.
