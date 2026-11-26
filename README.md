@@ -197,7 +197,7 @@ flowchart LR
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest tests -q      # 37 тестов
+python -m pytest tests -q      # 38 тестов
 ```
 
 Тесты строят синтетический enhanced-файл (Philips-подобная структура,

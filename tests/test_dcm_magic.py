@@ -462,3 +462,22 @@ def test_classic_ct_stays_ct_on_second_pass(tmp_path, enhanced_ct_file):
     assert report2.frame_count == 1
     assert ds.SOPClassUID == dcm_magic.CT_IMAGE_STORAGE
     assert ds.Modality == "CT"
+
+
+def test_force_16bit_widens_8bit_grayscale(tmp_path, enhanced_file):
+    source = pydicom.dcmread(enhanced_file["path"])
+    small = (source.pixel_array % 256).astype(np.uint8)
+    source.BitsAllocated = 8
+    source.BitsStored = 8
+    source.HighBit = 7
+    source.PixelRepresentation = 0
+    source.PixelData = small.tobytes()
+    source.save_as(enhanced_file["path"], enforce_file_format=True)
+
+    out = tmp_path / "out"
+    convert_file(enhanced_file["path"], str(out), force_16bit=True)
+    for ds in _read_all(str(out)):
+        assert int(ds.BitsAllocated) == 16
+        assert int(ds.BitsStored) == 16
+        assert int(ds.HighBit) == 15
+        assert ds.pixel_array.dtype == np.uint16

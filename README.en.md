@@ -199,7 +199,7 @@ faster. Most of the remaining time is writing 800 separate DICOM files; use
 
 ```bash
 python -m pip install -r requirements-dev.txt
-python -m pytest tests -q      # 37 tests
+python -m pytest tests -q      # 38 tests
 ```
 
 The tests build synthetic enhanced MR and CT files (Philips-like layout,

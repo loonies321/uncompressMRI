@@ -15,7 +15,8 @@
   in-memory validation is always enabled.
 - GUI checkbox “Harmonize tags for TPS” (enabled by default).
 - Regression tests for CT output, harmonization, charset handling, single-
-  valued `DimensionIndexValues`, and spatial Dimension Index over-splitting.
+  valued `DimensionIndexValues`, spatial Dimension Index over-splitting, and
+  `--force-16bit` widening.
 
 ### Fixed
 
